@@ -1,0 +1,48 @@
+{
+  "models": {
+    "local_fast": {
+      "primary": {
+        "provider": "ollama",
+        "model": "llama3.2:latest",
+        "baseUrl": "http://localhost:11434/v1",
+        "timeoutMs": 120000
+      }
+    },
+    "local_strong": {
+      "primary": {
+        "provider": "ollama",
+        "model": "qwen3:8b",
+        "baseUrl": "http://localhost:11434/v1",
+        "timeoutMs": 300000
+      }
+    },
+    "hosted_oss": {
+      "primary": {
+        "provider": "ollama",
+        "model": "qwen3:8b",
+        "baseUrl": "http://localhost:11434/v1",
+        "timeoutMs": 300000
+      }
+    },
+    "premium": {
+      "primary": {
+        "provider": "ollama",
+        "model": "qwen3:8b",
+        "baseUrl": "http://localhost:11434/v1",
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "routing": {
+    "defaultTier": "local_strong",
+    "maxRetriesPerTier": 1,
+    "enableEscalation": true,
+    "preferLocal": true,
+    "longContextTokenThreshold": 32000,
+    "probeAvailability": true
+  },
+  "telemetry": {
+    "enabled": true,
+    "logPath": "${MAESTRO_TELEMETRY_PATH:-~/.maestro-ai/telemetry.jsonl}"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "_note": "Run `maestro init` first — then merge ~/.maestro-ai/mcp-config.json into Cursor MCP settings (Settings → MCP).",
+  "mcpServers": {
+    "maestro-ai": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "env": {
+        "MAESTRO_CONFIG": "~/.maestro-ai/config.json",
+        "LITELLM_MASTER_KEY": "sk-litellm-local"
+      }
+    }
+  }
+}

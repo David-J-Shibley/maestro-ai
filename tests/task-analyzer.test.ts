@@ -1,0 +1,110 @@
+import { describe, expect, it } from "vitest";
+import { analyzeTask } from "../src/analyzer/task-analyzer.js";
+
+describe("TaskAnalyzer", () => {
+  it("classifies simple rewrite as easy local task", () => {
+    const analysis = analyzeTask({
+      userPrompt: "Rewrite this paragraph to be more concise.",
+    });
+
+    expect(analysis.taskType).toBe("rewriting");
+    expect(analysis.difficulty).toBe("easy");
+    expect(analysis.riskLevel).toBe("low");
+    expect(analysis.requiresCodeReasoning).toBe(false);
+  });
+
+  it("classifies JSON extraction with schema", () => {
+    const analysis = analyzeTask({
+      userPrompt: "Extract the author and title from this text.",
+      responseSchema: { type: "object" },
+    });
+
+    expect(analysis.taskType).toBe("extraction");
+    expect(analysis.requiresStructuredOutput).toBe(true);
+  });
+
+  it("classifies small code edit as medium", () => {
+    const analysis = analyzeTask({
+      userPrompt: "Fix the off-by-one error in this JavaScript function.",
+    });
+
+    expect(analysis.taskType).toBe("code_edit");
+    expect(analysis.requiresCodeReasoning).toBe(true);
+  });
+
+  it("classifies complex debugging as medium/hard", () => {
+    const analysis = analyzeTask({
+      userPrompt:
+        "Debug this flaky integration test that fails intermittently in CI across multiple modules.",
+    });
+
+    expect(analysis.taskType).toBe("debugging");
+    expect(["medium", "hard"]).toContain(analysis.difficulty);
+  });
+
+  it("classifies simple HTML page as easy code_edit", () => {
+    const analysis = analyzeTask({
+      userPrompt: "make me a html page that demonstrates what you can do",
+    });
+
+    expect(analysis.taskType).toBe("code_edit");
+    expect(analysis.difficulty).toBe("easy");
+    expect(analysis.requiresCodeReasoning).toBe(false);
+    expect(analysis.riskLevel).toBe("low");
+  });
+
+  it("does not classify simple landing page design as architecture", () => {
+    const analysis = analyzeTask({
+      userPrompt: "design a simple html landing page",
+    });
+
+    expect(analysis.taskType).toBe("code_edit");
+    expect(analysis.difficulty).toBe("easy");
+    expect(analysis.taskType).not.toBe("architecture");
+  });
+
+  it("does not classify model-router demo meta prompts as architecture", () => {
+    const prompts = [
+      "Determine routing for building a demonstration of model-router capabilities including tier selection and architecture overview",
+      "What model should handle creating a showcase demonstrating model router tier selection architecture",
+      "Build an HTML page demonstrating the model router architecture and tier selection",
+    ];
+
+    for (const userPrompt of prompts) {
+      const analysis = analyzeTask({ userPrompt });
+      expect(analysis.taskType).toBe("code_edit");
+      expect(analysis.difficulty).toBe("easy");
+      expect(analysis.requiresCodeReasoning).toBe(false);
+    }
+  });
+
+  it("still classifies real system architecture as hard", () => {
+    const analysis = analyzeTask({
+      userPrompt: "Design the architecture for a multi-tenant SaaS billing system with trade-offs.",
+    });
+
+    expect(analysis.taskType).toBe("architecture");
+    expect(analysis.difficulty).toBe("hard");
+  });
+
+  it("respects task hints", () => {
+    const analysis = analyzeTask({
+      userPrompt: "do something",
+      taskHints: { type: "code_edit", quality: "best", risk: "high" },
+    });
+
+    expect(analysis.taskType).toBe("code_edit");
+    expect(analysis.difficulty).toBe("hard");
+    expect(analysis.riskLevel).toBe("high");
+    expect(analysis.confidence).toBeGreaterThan(0.8);
+  });
+
+  it("detects tool use from tools array", () => {
+    const analysis = analyzeTask({
+      userPrompt: "List files",
+      tools: [{ type: "function", function: { name: "list_dir" } }],
+    });
+
+    expect(analysis.requiresToolUse).toBe(true);
+  });
+});

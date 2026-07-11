@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Code — What It Can Do</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0f;
+      --surface: #16171a;
+      --surface2: #1e1f23;
+      --border: #2a2b30;
+      --accent: #d97706;
+      --accent2: #7c3aed;
+      --text: #e8e9ed;
+      --muted: #8b8d97;
+      --green: #10b981;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --yellow: #f59e0b;
+      --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 80px 24px 60px;
+      text-align: center;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(217,119,6,.12), transparent);
+      border-bottom: 1px solid var(--border);
+    }
+    .hero-eyebrow {
+      font-size: .75rem;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 800;
+      letter-spacing: -.02em;
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero p {
+      font-size: 1.1rem;
+      color: var(--muted);
+      max-width: 560px;
+      margin: 0 auto 32px;
+    }
+
+    /* router badge */
+    .router-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 18px;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+    .router-badge .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      flex-shrink: 0;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .router-badge strong { color: var(--text); }
+    .router-badge .tier {
+      background: var(--accent);
+      color: #000;
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-weight: 700;
+      font-size: .72rem;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+
+    /* ── LAYOUT ── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+    .section { padding: 64px 0; border-bottom: 1px solid var(--border); }
+    .section:last-child { border-bottom: none; }
+    .section-label {
+      font-size: .7rem;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .section h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      margin-bottom: 8px;
+    }
+    .section-desc {
+      color: var(--muted);
+      margin-bottom: 36px;
+      max-width: 580px;
+      font-size: .95rem;
+    }
+
+    /* ── CODE BLOCK ── */
+    .code-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: .75rem;
+      color: var(--muted);
+    }
+    .code-header .dots { display: flex; gap: 6px; }
+    .code-header .dots span {
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .code-header .dots span:nth-child(1) { background: #ff5f57; }
+    .code-header .dots span:nth-child(2) { background: #febc2e; }
+    .code-header .dots span:nth-child(3) { background: #28c840; }
+    pre {
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      line-height: 1.65;
+      padding: 20px 24px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    /* syntax colors */
+    .kw  { color: #c792ea; }
+    .fn  { color: #82aaff; }
+    .str { color: #c3e88d; }
+    .cm  { color: #546e7a; font-style: italic; }
+    .num { color: #f78c6c; }
+    .ty  { color: #ffcb6b; }
+
+    /* ── DIFF ── */
+    .diff-add  { background: rgba(16,185,129,.12); color: #6ee7b7; display: block; }
+    .diff-del  { background: rgba(239,68,68,.12);  color: #fca5a5; display: block; text-decoration: line-through; }
+    .diff-ctx  { color: var(--muted); display: block; }
+
+    /* ── SPLIT ── */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+
+    /* ── CARD GRID ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card-icon {
+      font-size: 1.6rem;
+      margin-bottom: 10px;
+    }
+    .card h3 {
+      font-size: .95rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .card p { font-size: .85rem; color: var(--muted); line-height: 1.55; }
+
+    /* ── BUG TRACE ── */
+    .trace {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .trace-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 16px;
+      font-family: var(--font-mono);
+      font-size: .8rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .trace-line:last-child { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: .68rem;
+      font-weight: 700;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .badge-error   { background: rgba(239,68,68,.2);  color: var(--red);  }
+    .badge-fix     { background: rgba(16,185,129,.2); color: var(--green);}
+    .badge-info    { background: rgba(59,130,246,.2); color: var(--blue); }
+    .badge-warn    { background: rgba(245,158,11,.2); color: var(--yellow);}
+
+    /* ── ROUTER SECTION ── */
+    .router-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .85rem;
+    }
+    .router-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: var(--surface2);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: .72rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+    .router-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .router-table tr:last-child td { border-bottom: none; }
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .pill-premium  { background: rgba(217,119,6,.2);  color: var(--accent);  }
+    .pill-balanced { background: rgba(124,58,237,.2); color: #a78bfa; }
+    .pill-fast     { background: rgba(16,185,129,.2); color: var(--green); }
+
+    /* ── ARCH DIAGRAM ── */
+    .arch-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      background: var(--surface);
+      margin: 4px 0;
+    }
+    .arch-box small { font-size: .72rem; color: var(--muted); }
+    .arch-arrow { text-align: center; color: var(--muted); font-size: .8rem; padding: 4px 0; }
+    .arch-row { display: flex; gap: 12px; }
+    .arch-row .arch-box { flex: 1; }
+
+    /* ── FOOTER ── */
+    footer {
+      padding: 32px 24px;
+      text-align: center;
+      font-size: .8rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+
+<!-- ═══ HERO ═══════════════════════════════════════════════════════════════ -->
+<header class="hero">
+  <div class="hero-eyebrow">Claude Code · Capability Demo</div>
+  <h1>Everything <span>Claude Code</span><br>can do for your codebase</h1>
+  <p>From one-line fixes to full-stack architecture — inside your terminal, IDE, or browser.</p>
+  <div class="router-badge">
+    <span class="dot"></span>
+    Model router selected &nbsp;<span class="tier">premium</span>&nbsp;
+    <strong>claude-sonnet-4-6</strong> &nbsp;·&nbsp; task: <strong>architecture · hard</strong>
+  </div>
+</header>
+
+<!-- ═══ CODE GENERATION ════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">01 · Code Generation</div>
+    <h2>Write code from a description</h2>
+    <p class="section-desc">Describe what you need in plain English. Claude Code writes idiomatic, production-ready implementations — functions, classes, APIs, tests.</p>
+    <div class="split">
+      <div>
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:8px;">Prompt</p>
+        <div class="code-wrap">
+          <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>plain text</span></div>
+          <pre style="color:#c3e88d;font-style:italic;">"Write a TypeScript function that rate-limits
+async API calls using a token bucket, supports
+per-key limits, and auto-refills every second."</pre>
+        </div>
+      </div>
+      <div>
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:8px;">Generated output</p>
+        <div class="code-wrap">
+          <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>rate-limiter.ts</span></div>
+          <pre><span class="kw">class</span> <span class="ty">TokenBucket</span> {
+  <span class="kw">private</span> tokens = <span class="kw">new</span> <span class="ty">Map</span>&lt;<span class="ty">string</span>, <span class="num">number</span>&gt;();
+  <span class="kw">private</span> refillTimer: <span class="ty">NodeJS.Timer</span>;
+
+  <span class="fn">constructor</span>(<span class="kw">private</span> capacity: <span class="num">number</span> = <span class="num">10</span>) {
+    <span class="kw">this</span>.refillTimer = <span class="fn">setInterval</span>(
+      () =&gt; <span class="kw">this</span>.<span class="fn">refill</span>(), <span class="num">1000</span>
+    );
+  }
+
+  <span class="fn">acquire</span>(key: <span class="ty">string</span>): <span class="ty">boolean</span> {
+    <span class="kw">const</span> t = <span class="kw">this</span>.tokens.<span class="fn">get</span>(key) ?? <span class="kw">this</span>.capacity;
+    <span class="kw">if</span> (t &lt;= <span class="num">0</span>) <span class="kw">return false</span>;
+    <span class="kw">this</span>.tokens.<span class="fn">set</span>(key, t - <span class="num">1</span>);
+    <span class="kw">return true</span>;
+  }
+
+  <span class="kw">private</span> <span class="fn">refill</span>() {
+    <span class="kw">for</span> (<span class="kw">const</span> key <span class="kw">of</span> <span class="kw">this</span>.tokens.<span class="fn">keys</span>())
+      <span class="kw">this</span>.tokens.<span class="fn">set</span>(key, <span class="kw">this</span>.capacity);
+  }
+}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ REFACTORING ════════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">02 · Refactoring</div>
+    <h2>Clean up and modernize existing code</h2>
+    <p class="section-desc">Point Claude at a file or function. It rewrites for clarity, removes duplication, applies language idioms, and explains every change.</p>
+    <div class="code-wrap">
+      <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>diff — user.js</span></div>
+      <pre><span class="diff-del">- function getUser(id, cb) {</span>
+<span class="diff-del">-   db.query('SELECT * FROM users WHERE id='+id, function(err, rows) {</span>
+<span class="diff-del">-     if (err) { cb(err); return; }</span>
+<span class="diff-del">-     cb(null, rows[0]);</span>
+<span class="diff-del">-   });</span>
+<span class="diff-del">- }</span>
+<span class="diff-add">+ async function getUser(id: string): Promise&lt;User | null&gt; {</span>
+<span class="diff-add">+   const [user] = await db.query&lt;User&gt;(</span>
+<span class="diff-add">+     'SELECT * FROM users WHERE id = ?', [id]  // parameterized — no SQLi</span>
+<span class="diff-add">+   );</span>
+<span class="diff-add">+   return user ?? null;</span>
+<span class="diff-add">+ }</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ DEBUGGING ══════════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">03 · Debugging</div>
+    <h2>Find and fix bugs with a full reasoning trace</h2>
+    <p class="section-desc">Paste an error or stack trace. Claude identifies the root cause, explains why it happens, and applies the minimal correct fix.</p>
+    <div class="trace">
+      <div class="trace-line">
+        <span class="badge badge-error">ERROR</span>
+        <span>TypeError: Cannot read properties of undefined (reading 'map')<br><small style="color:var(--muted)">at ProductList.render (ProductList.tsx:42)</small></span>
+      </div>
+      <div class="trace-line">
+        <span class="badge badge-info">ROOT CAUSE</span>
+        <span><code style="font-family:var(--font-mono)">products</code> is <code style="font-family:var(--font-mono)">undefined</code> on first render — the prop is optional but the component doesn't guard against it.</span>
+      </div>
+      <div class="trace-line">
+        <span class="badge badge-warn">LINE 42</span>
+        <span style="font-family:var(--font-mono);color:var(--red)">products.map(p =&gt; &lt;ProductCard key={p.id} {...p} /&gt;)</span>
+      </div>
+      <div class="trace-line">
+        <span class="badge badge-fix">FIX</span>
+        <span style="font-family:var(--font-mono);color:var(--green)">(products ?? []).map(p =&gt; &lt;ProductCard key={p.id} {...p} /&gt;)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ARCHITECTURE ═══════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">04 · Architecture Planning</div>
+    <h2>Design systems before you build them</h2>
+    <p class="section-desc">Describe a feature or system. Claude drafts the component breakdown, data flow, API contracts, and trade-offs — reviewable before a line is written.</p>
+    <div class="code-wrap" style="margin-bottom:24px;">
+      <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>architecture sketch — notification service</span></div>
+      <div style="padding:20px 24px;">
+        <div class="arch-box"><strong>API Gateway</strong> <small>— POST /notify, auth + rate-limit</small></div>
+        <div class="arch-arrow">↓ enqueue</div>
+        <div class="arch-box"><strong>Message Queue (Redis Streams)</strong> <small>— durable, consumer groups per channel</small></div>
+        <div class="arch-arrow">↓ fan-out</div>
+        <div class="arch-row">
+          <div class="arch-box"><strong>Email Worker</strong><br><small>SES / Resend</small></div>
+          <div class="arch-box"><strong>Push Worker</strong><br><small>FCM / APNs</small></div>
+          <div class="arch-box"><strong>SMS Worker</strong><br><small>Twilio</small></div>
+        </div>
+        <div class="arch-arrow">↓ write result</div>
+        <div class="arch-box"><strong>Delivery Log (Postgres)</strong> <small>— idempotency key, status, retry count</small></div>
+      </div>
+    </div>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">📋</div>
+        <h3>Master spec</h3>
+        <p>Generates a complete implementation spec you approve before any code is written.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <h3>Task breakdown</h3>
+        <p>Breaks the spec into ordered, atomic tasks with clear acceptance criteria.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔀</div>
+        <h3>Impact analysis</h3>
+        <p>Maps every file that will change and flags downstream dependencies before touching anything.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ MODEL ROUTER ═══════════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">05 · Model Router</div>
+    <h2>Right model for every subtask — automatically</h2>
+    <p class="section-desc">The Maestro AI MCP server analyzes each subtask and picks the cheapest model that's strong enough. For <em>this very page</em> it chose <strong>premium · claude-sonnet-4-6</strong>.</p>
+    <div class="code-wrap" style="margin-bottom:24px;">
+      <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>router decision · this session</span></div>
+      <pre>{
+  <span class="str">"tier"</span>:     <span class="str">"premium"</span>,
+  <span class="str">"model"</span>:    <span class="str">"claude-sonnet-4-6"</span>,
+  <span class="str">"reason"</span>:   <span class="str">"hard/high-risk/complex task"</span>,
+  <span class="str">"analysis"</span>: {
+    <span class="str">"taskType"</span>:            <span class="str">"architecture"</span>,
+    <span class="str">"difficulty"</span>:          <span class="str">"hard"</span>,
+    <span class="str">"riskLevel"</span>:           <span class="str">"medium"</span>,
+    <span class="str">"requiresCodeReasoning"</span>: <span class="kw">true</span>,
+    <span class="str">"confidence"</span>:          <span class="num">0.75</span>
+  }
+}</pre>
+    </div>
+    <div class="code-wrap">
+      <div class="code-header"><div class="dots"><span></span><span></span><span></span></div><span>routing tiers</span></div>
+      <table class="router-table">
+        <thead>
+          <tr>
+            <th>Tier</th><th>Example tasks</th><th>Speed</th><th>Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill pill-fast">local_fast</span></td>
+            <td>Reformatting, simple classification</td>
+            <td style="color:var(--green)">~50 ms</td>
+            <td style="color:var(--green)">free</td>
+          </tr>
+          <tr>
+            <td><span class="pill pill-balanced">hosted_oss</span></td>
+            <td>Summarization, extraction, rewriting</td>
+            <td style="color:var(--yellow)">~400 ms</td>
+            <td style="color:var(--yellow)">low</td>
+          </tr>
+          <tr>
+            <td><span class="pill pill-premium">premium</span></td>
+            <td>Architecture, debugging, multi-step codegen</td>
+            <td style="color:var(--muted)">~1–3 s</td>
+            <td style="color:var(--accent)">standard</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ MORE CAPABILITIES ══════════════════════════════════════════════════ -->
+<section class="section">
+  <div class="container">
+    <div class="section-label">06 · More Capabilities</div>
+    <h2>The full toolkit</h2>
+    <p class="section-desc">Claude Code integrates into your full development workflow — from first commit to production.</p>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🧪</div>
+        <h3>Test generation</h3>
+        <p>Writes unit, integration, and edge-case tests for existing code, including mocks and fixtures.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h3>Security review</h3>
+        <p>Scans diffs for OWASP top-10 issues, secrets, and injection vectors before they reach CI.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📝</div>
+        <h3>PR review &amp; comments</h3>
+        <p>Reviews pull requests and posts inline GitHub comments with specific, actionable suggestions.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📦</div>
+        <h3>Migration &amp; upgrade</h3>
+        <p>Handles large-scale refactors — rename a symbol across 200 files, or upgrade a major dependency.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">💬</div>
+        <h3>Codebase Q&amp;A</h3>
+        <p>"How does auth work?" — Claude reads the code, not cached docs, and gives a precise answer.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🖥️</div>
+        <h3>Terminal &amp; IDE native</h3>
+        <p>Works in the CLI, VS Code, JetBrains, or claude.ai/code — full context from your working tree.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═════════════════════════════════════════════════════════════ -->
+<footer>
+  <p>Built with <a href="https://claude.ai/code">Claude Code</a> · Model selected by <strong>Maestro AI</strong> MCP · <a href="https://github.com/anthropics/claude-code/issues">Feedback</a></p>
+</footer>
+
+</body>
+</html>

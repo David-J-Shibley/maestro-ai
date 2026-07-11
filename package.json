@@ -1,0 +1,57 @@
+{
+  "name": "maestro-ai",
+  "version": "0.4.0",
+  "description": "Maestro AI — dynamic model delegation for agentic coding harnesses",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "maestro": "./dist/cli.js",
+    "maestro-mcp": "./dist/mcp-server.js"
+  },
+  "files": [
+    "dist",
+    "config",
+    ".env.example",
+    "README.md",
+    "docs"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "mcp": "node dist/mcp-server.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "maestro",
+    "llm",
+    "routing",
+    "litellm",
+    "ollama",
+    "agent",
+    "mcp"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0-beta.3",
+    "zod": "^4.4.3"
+  }
+}
