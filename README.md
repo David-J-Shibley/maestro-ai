@@ -68,6 +68,14 @@ npm install -g maestro-ai
 npx maestro-ai init --profile ollama-only
 ```
 
+## Examples
+
+Browser-based capability demos live under [`examples/`](./examples):
+
+- [`examples/demo.html`](./examples/demo.html) — Claude Code capabilities overview
+- [`examples/claude-code-demo.html`](./examples/claude-code-demo.html) — interactive Claude Code demo
+- [`examples/delegate-subtask.sh`](./examples/delegate-subtask.sh) — shell hook delegating a subtask to Maestro
+
 ## Claude Code integration (MCP — recommended)
 
 ### Cursor

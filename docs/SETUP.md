@@ -114,6 +114,10 @@ See `.env.example` in the repo or `~/.maestro-ai/.env.example` after init:
 |----------|--------------|---------|
 | `MAESTRO_CONFIG` | Optional | Defaults to `~/.maestro-ai/config.json` after init |
 | `LITELLM_MASTER_KEY` | LiteLLM profiles | Proxy auth (default: `sk-litellm-local`) |
+
+> **Note:** `sk-litellm-local` is a built-in convenience default for the LiteLLM proxy, which binds to `localhost:4000` only — it is safe to keep for local development. If you ever expose LiteLLM beyond localhost, override it with a strong random key: `export LITELLM_MASTER_KEY=$(openssl rand -hex 32)` before starting the proxy.
+
+> **Note:** `sk-litellm-local` is a built-in convenience default for the LiteLLM proxy, which binds to `localhost:4000` only — it is safe to keep for local development. If you ever expose LiteLLM beyond localhost, override it with a strong random key: `export LITELLM_MASTER_KEY=$(openssl rand -hex 32)` before starting the proxy.
 | `FEATHERLESS_API_KEY` | Hosted OSS / GLM | Featherless API |
 | `AWS_*` | Premium (Bedrock) | Claude Sonnet via Bedrock |
 
