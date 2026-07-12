@@ -5,7 +5,7 @@ Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls 
 ## Quick start (new machine)
 
 ```bash
-git clone <repo-url> maestro-ai && cd maestro-ai
+git clone https://github.com/David-J-Shibley/maestro-ai.git maestro-ai && cd maestro-ai
 npm install && npm run build
 
 maestro init                    # creates ~/.maestro-ai/, MCP config, checks models

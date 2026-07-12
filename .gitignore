@@ -6,3 +6,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Local tool configs (user/machine-specific)
+.claude/

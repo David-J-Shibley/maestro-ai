@@ -12,7 +12,7 @@ Get Maestro running on a new machine in ~10 minutes.
 ### Option A — clone and build (development)
 
 ```bash
-git clone <your-repo-url> maestro-ai
+git clone https://github.com/David-J-Shibley/maestro-ai.git maestro-ai
 cd maestro-ai
 npm install    # runs prepare → build
 ```

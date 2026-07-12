@@ -14,8 +14,17 @@
     "config",
     ".env.example",
     "README.md",
-    "docs"
+    "docs",
+    "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/David-J-Shibley/maestro-ai.git"
+  },
+  "homepage": "https://github.com/David-J-Shibley/maestro-ai#readme",
+  "bugs": {
+    "url": "https://github.com/David-J-Shibley/maestro-ai/issues"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
