@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EvaluationCheck, EvaluationResult, EvaluatorContext } from "../types.js";
+import {
+  extractCompletionFromRaw,
+  hasMeaningfulContent,
+  stripInvisibleAndControl,
+} from "../provider/content-extract.js";
 
 const REFUSAL_PATTERNS = [
   /\bi cannot\b/i,
@@ -20,6 +25,9 @@ export function evaluateResponse(
 
   const nonEmpty = checkNonEmpty(content);
   checks.push(nonEmpty);
+
+  const contentIntegrity = checkContentIntegrity(content, context);
+  if (contentIntegrity) checks.push(contentIntegrity);
 
   const refusal = checkRefusal(content, context.taskAllowed ?? true);
   checks.push(refusal);
@@ -44,12 +52,16 @@ export function evaluateResponse(
   const retryRecommended =
     !pass &&
     refusal.pass &&
-    (!nonEmpty.pass || (jsonCheck !== null && !jsonCheck.pass));
+    (!nonEmpty.pass ||
+      (contentIntegrity?.pass === false) ||
+      (jsonCheck !== null && !jsonCheck.pass));
 
   const escalationRecommended =
     !pass &&
     (refusal.pass === false ||
-      (jsonCheck?.pass === false && content.trim().length > 0) ||
+      !nonEmpty.pass ||
+      contentIntegrity?.pass === false ||
+      (jsonCheck?.pass === false && hasMeaningfulContent(content)) ||
       isLowConfidenceOutput(content) ||
       (toolCheck?.pass === false));
 
@@ -122,8 +134,53 @@ export async function evaluateResponseAsync(
 }
 
 function checkNonEmpty(content: string): EvaluationCheck {
-  const pass = content.trim().length > 0;
-  return { name: "non_empty", pass, reason: pass ? undefined : "Empty output" };
+  const pass = hasMeaningfulContent(content);
+  return {
+    name: "non_empty",
+    pass,
+    reason: pass ? undefined : "Empty or whitespace-only output",
+  };
+}
+
+function checkContentIntegrity(
+  content: string,
+  context: EvaluatorContext
+): EvaluationCheck | null {
+  if (!context.rawResponse) return null;
+
+  const extracted = extractCompletionFromRaw(
+    context.rawResponse as Parameters<typeof extractCompletionFromRaw>[0]
+  );
+
+  const meaningful = hasMeaningfulContent(content);
+  const tokens = extracted.completionTokens ?? 0;
+
+  if (!meaningful && tokens > 0 && !extracted.hadToolCalls) {
+    return {
+      name: "content_integrity",
+      pass: false,
+      reason: `Model reported ${tokens} completion tokens but no visible text (possible truncated or alternate response field)`,
+    };
+  }
+
+  if (!meaningful && extracted.finishReason === "length") {
+    return {
+      name: "content_integrity",
+      pass: false,
+      reason: "Response truncated (finish_reason=length) with no usable content",
+    };
+  }
+
+  const stripped = stripInvisibleAndControl(content);
+  if (content.length > 0 && stripped.length === 0) {
+    return {
+      name: "content_integrity",
+      pass: false,
+      reason: "Response contains only invisible or control characters",
+    };
+  }
+
+  return { name: "content_integrity", pass: true };
 }
 
 function checkRefusal(content: string, taskAllowed: boolean): EvaluationCheck {
@@ -224,9 +281,10 @@ function checkRequiredFiles(context: EvaluatorContext): EvaluationCheck | null {
 }
 
 function isLowConfidenceOutput(content: string): boolean {
-  const lower = content.toLowerCase();
+  const visible = stripInvisibleAndControl(content);
+  const lower = visible.toLowerCase();
   return (
-    content.trim().length < 20 ||
+    visible.length < 20 ||
     /\bi('m| am) not sure\b/.test(lower) ||
     /\bunable to determine\b/.test(lower) ||
     /\bpartial\b/.test(lower)

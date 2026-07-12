@@ -150,6 +150,19 @@ export async function routedLLMCall(
 
       if (evaluation.pass) break;
 
+      const emptyOrCorrupt =
+        !evaluation.checks.find((c) => c.name === "non_empty")?.pass ||
+        evaluation.checks.find((c) => c.name === "content_integrity")?.pass === false;
+
+      if (emptyOrCorrupt && config.routing.enableEscalation) {
+        const next = nextTier(currentTier);
+        if (next && next !== currentTier && canEscalateWithinBudget(next, budget)) {
+          currentTier = next;
+          escalated = true;
+          continue;
+        }
+      }
+
       if (evaluation.retryRecommended && totalAttempts <= config.routing.maxRetriesPerTier) {
         continue;
       }
@@ -176,7 +189,10 @@ export async function routedLLMCall(
       const shouldEscalate =
         config.routing.enableEscalation &&
         (err instanceof ProviderError
-          ? err.code === "timeout" || err.code === "http" || err.code === "network"
+          ? err.code === "timeout" ||
+            err.code === "http" ||
+            err.code === "network" ||
+            err.code === "empty"
           : true);
 
       if (shouldEscalate) {

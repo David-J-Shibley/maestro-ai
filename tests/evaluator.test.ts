@@ -12,6 +12,25 @@ describe("ResponseEvaluator", () => {
     const result = evaluateResponse("   ");
     expect(result.pass).toBe(false);
     expect(result.retryRecommended).toBe(true);
+    expect(result.escalationRecommended).toBe(true);
+  });
+
+  it("fails invisible control-only output", () => {
+    const result = evaluateResponse("\u0000\u200B");
+    expect(result.pass).toBe(false);
+    expect(result.checks.find((c) => c.name === "non_empty")?.pass).toBe(false);
+  });
+
+  it("fails when tokens reported but no visible content", () => {
+    const result = evaluateResponse("", {
+      rawResponse: {
+        choices: [{ message: { content: "" }, finish_reason: "stop" }],
+        usage: { completion_tokens: 42 },
+      },
+    });
+    expect(result.pass).toBe(false);
+    expect(result.checks.find((c) => c.name === "content_integrity")?.pass).toBe(false);
+    expect(result.escalationRecommended).toBe(true);
   });
 
   it("fails invalid JSON when schema required", () => {

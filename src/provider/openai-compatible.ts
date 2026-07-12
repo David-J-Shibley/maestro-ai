@@ -5,6 +5,12 @@ import type {
   ModelEndpointConfig,
   ModelTier,
 } from "../types.js";
+import {
+  describeEmptyResponse,
+  extractCompletionFromRaw,
+  hasMeaningfulContent,
+  type ChatCompletionChoice,
+} from "./content-extract.js";
 
 export interface ChatCompletionRequest {
   messages: ChatMessage[];
@@ -72,14 +78,25 @@ export async function chatCompletion(
     }
 
     const raw = (await response.json()) as ChatCompletionResponse;
-    const content = extractContent(raw);
+    const extracted = extractCompletionFromRaw(raw);
+    const content = extracted.content;
 
-    if (!content.trim()) {
-      throw new ProviderError("Empty response content", "empty");
+    if (!hasMeaningfulContent(content)) {
+      if (extracted.hadToolCalls) {
+        return {
+          content: "",
+          model: raw.model ?? endpoint.model,
+          tier,
+          usage: mapUsage(raw.usage),
+          latencyMs: Date.now() - start,
+          raw,
+        };
+      }
+      throw new ProviderError(describeEmptyResponse(extracted), "empty");
     }
 
     return {
-      content,
+      content: content,
       model: raw.model ?? endpoint.model,
       tier,
       usage: mapUsage(raw.usage),
@@ -102,21 +119,12 @@ export async function chatCompletion(
 
 interface ChatCompletionResponse {
   model?: string;
-  choices?: Array<{
-    message?: { content?: string | null };
-    finish_reason?: string;
-  }>;
+  choices?: ChatCompletionChoice[];
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
   };
-}
-
-function extractContent(raw: ChatCompletionResponse): string {
-  const choice = raw.choices?.[0];
-  const content = choice?.message?.content;
-  return typeof content === "string" ? content : "";
 }
 
 function mapUsage(usage?: ChatCompletionResponse["usage"]): LLMUsage | undefined {

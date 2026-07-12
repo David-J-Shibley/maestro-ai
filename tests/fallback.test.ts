@@ -79,16 +79,6 @@ describe("fallback and escalation", () => {
   });
 
   it("escalates on timeout", async () => {
-    mockFetchSequence([
-      { ok: false, status: 504, reject: undefined },
-      {
-        ok: true,
-        body: {
-          choices: [{ message: { content: "recovered response" } }],
-        },
-      },
-    ]);
-
     vi.stubGlobal("fetch", vi.fn()
       .mockRejectedValueOnce(new ProviderError("timeout", "timeout"))
       .mockResolvedValueOnce({
@@ -109,6 +99,62 @@ describe("fallback and escalation", () => {
 
     expect(result.escalated).toBe(true);
     expect(result.response.content).toBe("recovered response");
+  });
+
+  it("escalates on empty provider response", async () => {
+    mockFetchSequence([
+      {
+        ok: true,
+        body: {
+          choices: [{ message: { content: "" }, finish_reason: "stop" }],
+          usage: { completion_tokens: 50 },
+        },
+      },
+      {
+        ok: true,
+        body: {
+          model: "strong",
+          choices: [{ message: { content: "recovered after empty glm" } }],
+        },
+      },
+    ]);
+
+    const result = await routedLLMCall(
+      {
+        messages: [{ role: "user", content: "Summarize this paragraph." }],
+      },
+      { config: makeConfig() }
+    );
+
+    expect(result.escalated).toBe(true);
+    expect(result.response.content).toBe("recovered after empty glm");
+  });
+
+  it("escalates on invisible-only content", async () => {
+    mockFetchSequence([
+      {
+        ok: true,
+        body: {
+          choices: [{ message: { content: "\u0000\u200B" }, finish_reason: "stop" }],
+        },
+      },
+      {
+        ok: true,
+        body: {
+          choices: [{ message: { content: "visible recovery" } }],
+        },
+      },
+    ]);
+
+    const result = await routedLLMCall(
+      {
+        messages: [{ role: "user", content: "Rewrite this sentence." }],
+      },
+      { config: makeConfig() }
+    );
+
+    expect(result.escalated).toBe(true);
+    expect(result.response.content).toBe("visible recovery");
   });
 
   it("dry-run does not call fetch", async () => {
