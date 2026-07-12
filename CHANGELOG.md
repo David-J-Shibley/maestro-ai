@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-12
+
+### Added
+- **docs/VISION.md** — product vision and design principles for Maestro AI.
+- **Routing policy engine** with bundled `config/default.policy.json` for declarative routing rules; policy types and loading integrated into config and init.
+- **Explain Your Decision** — structured explanations in routing reports describing why a tier and model were chosen.
+- **Historical stats for explanations** — telemetry and `maestro stats` aggregate explanation-related routing metadata over time.
+- **Tests** — `tests/explanation-policy.test.ts` plus updates to MCP and router tests (82 tests passing).
+- **README** and **docs/SETUP.md** updated for the policy engine, decision explanations, and configuration.
+
+[0.5.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.5.0
+
 ## [0.4.1] - 2026-07-12
 
 ### Fixed

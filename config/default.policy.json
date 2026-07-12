@@ -1,0 +1,31 @@
+{
+  "task_type_tiers": {
+    "summarization": "local_strong",
+    "rewriting": "local_strong",
+    "extraction": "local_strong",
+    "formatting": "local_fast",
+    "architecture": "premium",
+    "debugging": "hosted_oss",
+    "refactoring": "hosted_oss"
+  },
+  "privacy": {
+    "keywords": [
+      "password",
+      "api_key",
+      "api key",
+      "secret",
+      "credential",
+      "ssn",
+      "private key",
+      ".env"
+    ],
+    "max_tier": "local_strong",
+    "reason": "Privacy policy: sensitive content stays on localhost"
+  },
+  "sensitive_code_local_only": {
+    "enabled": true,
+    "max_tier": "local_strong",
+    "reason": "High-risk code tasks stay local when policy enabled"
+  },
+  "latency_target_ms": null
+}

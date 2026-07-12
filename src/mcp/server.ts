@@ -24,7 +24,7 @@ function textResult(data: unknown) {
 
 export function createMaestroMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "maestro-ai", version: "0.3.0" },
+    { name: "maestro-ai", version: "0.5.0" },
     { capabilities: { tools: {} } }
   );
 
@@ -33,7 +33,7 @@ export function createMaestroMcpServer(): McpServer {
     {
       title: "Maestro Route",
       description:
-        "Analyze a task and return full routing report (tier, analysis, debug trace, probe status, fallback reason) without calling an LLM. Pass the literal user task in `prompt`.",
+        "Analyze a task and return full routing report with human-readable explanation (tier, analysis, debug, probe, why[]). Pass the literal user task in `prompt`.",
       inputSchema: routeToolInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -50,7 +50,7 @@ export function createMaestroMcpServer(): McpServer {
     {
       title: "Maestro Ask",
       description:
-        "Route and execute an LLM call. Response always includes full routing report. Pass literal task text in `prompt`.",
+        "Route and execute an LLM call. Response includes full routing report and explanation.markdown. Pass literal task text in `prompt`.",
       inputSchema: askToolInputSchema,
       annotations: {
         readOnlyHint: false,

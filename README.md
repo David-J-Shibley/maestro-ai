@@ -23,6 +23,10 @@ maestro route "summarize this README" --debug
 
 Full setup guide: [docs/SETUP.md](docs/SETUP.md)
 
+Vision & roadmap: [docs/VISION.md](docs/VISION.md)
+
+Technical write-up: [docs/ARTICLE.md](docs/ARTICLE.md)
+
 ## Quick start (already configured)
 
 ```bash
@@ -58,15 +62,16 @@ npx maestro stats --last 50
 ## Install options
 
 ```bash
-# From repo
-npm install && npm run build
-
-# Global (when published to npm)
+# npm (published package)
 npm install -g maestro-ai
-
-# One-shot
 npx maestro-ai init --profile ollama-only
+
+# From source
+git clone https://github.com/David-J-Shibley/maestro-ai.git
+cd maestro-ai && npm install
 ```
+
+See [docs/ARTICLE.md](docs/ARTICLE.md) for npm vs git clone, MCP setup, and programmatic API usage.
 
 ## Examples
 
@@ -121,7 +126,17 @@ Every `maestro_route` / `maestro_ask` response includes:
 
 `debug` and `probe` are always present — not gated on `debug: true`.
 
-### Session routing policy
+Every response also includes **`explanation`** — a human-readable decision card (`explanation.markdown`, `explanation.why[]`) describing why this model was chosen.
+
+### Routing policy
+
+Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):
+
+- Task-type → tier overrides (e.g. architecture → premium)
+- Privacy keywords → cap to local tiers
+- Sensitive high-risk code → stay on localhost
+
+See [docs/VISION.md](docs/VISION.md) for the orchestration roadmap.
 
 Pass once per chat session via MCP or CLI:
 

@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { expandPath } from "../config/load-config.js";
-import type { ModelTier, TelemetryRecord } from "../types.js";
+import type { ModelTier, TelemetryRecord, TaskType } from "../types.js";
 
 export interface TelemetryStats {
   total: number;
@@ -40,6 +40,41 @@ export function getSessionSpend(logPath: string, sessionId: string): number {
   return loadAllTelemetryRecords(logPath)
     .filter((r) => r.sessionId === sessionId)
     .reduce((sum, r) => sum + (r.estimatedCostUsd ?? 0), 0);
+}
+
+export interface HistoricalSuccessRate {
+  sampleSize: number;
+  successRate: number;
+  taskType: TaskType;
+  tier: ModelTier;
+}
+
+export function getHistoricalSuccessRate(
+  logPath: string,
+  taskType: TaskType,
+  tier: ModelTier,
+  options: { minSamples?: number; limit?: number } = {}
+): HistoricalSuccessRate | null {
+  const minSamples = options.minSamples ?? 5;
+  const limit = options.limit ?? 500;
+
+  const records = loadAllTelemetryRecords(logPath).slice(-limit);
+  const matching = records.filter((r) => {
+    if (r.taskAnalysis.taskType !== taskType) return false;
+    const servedTier =
+      r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier;
+    return servedTier === tier;
+  });
+
+  if (matching.length < minSamples) return null;
+
+  const successes = matching.filter((r) => r.success).length;
+  return {
+    sampleSize: matching.length,
+    successRate: successes / matching.length,
+    taskType,
+    tier,
+  };
 }
 
 export function computeTelemetryStats(

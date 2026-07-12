@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ModelTier, RouterConfig } from "../types.js";
 import { normalizeModels, type RawTierEntry } from "./tier-config.js";
 import { userConfigPath } from "./package-paths.js";
+import { loadPolicy } from "./policy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -84,6 +85,11 @@ export function parseRouterConfig(raw: unknown): RouterConfig {
   return config;
 }
 
+export function attachPolicy(config: RouterConfig, policyPath?: string): RouterConfig {
+  config.policy = loadPolicy(policyPath);
+  return config;
+}
+
 export function defaultConfigPath(): string {
   const packageRoot = join(__dirname, "..", "..");
   return join(packageRoot, "config", "default.config.json");
@@ -102,9 +108,9 @@ export function loadConfig(configPath?: string): RouterConfig {
   }
 
   const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  return parseRouterConfig(raw);
+  return attachPolicy(parseRouterConfig(raw));
 }
 
 export function loadConfigFromString(json: string): RouterConfig {
-  return parseRouterConfig(JSON.parse(json) as unknown);
+  return attachPolicy(parseRouterConfig(JSON.parse(json) as unknown));
 }

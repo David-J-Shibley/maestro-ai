@@ -16,6 +16,7 @@ export type {
   RouterOverrides,
   RoutingConfig,
   RoutingDecision,
+  RoutingPolicy,
   SessionPolicy,
   TaskAnalysis,
   TaskAnalysisInput,
@@ -36,7 +37,14 @@ export {
   hashPrompt,
 } from "./analyzer/task-analyzer.js";
 
-export { loadConfig, loadConfigFromString, parseRouterConfig } from "./config/load-config.js";
+export { loadConfig, loadConfigFromString, parseRouterConfig, attachPolicy } from "./config/load-config.js";
+export {
+  applyRoutingPolicy,
+  loadPolicy,
+  loadPolicyFromString,
+  defaultPolicyPath,
+  userPolicyPath,
+} from "./config/policy.js";
 export {
   CONFIG_PROFILES,
   maestroHomeDir,
@@ -59,6 +67,12 @@ export { probeAllTiers, probeEndpoint, probeTier } from "./provider/probe.js";
 
 export { routeTask } from "./router/model-router.js";
 export { buildRoutingReport } from "./routing/report.js";
+export type { RoutingReport } from "./routing/report.js";
+export {
+  buildDecisionExplanation,
+  formatExplanationPlain,
+} from "./routing/explanation.js";
+export type { DecisionExplanation, HistoricalContext } from "./routing/explanation.js";
 export {
   applyBudgetToTier,
   canEscalateWithinBudget,
@@ -76,9 +90,11 @@ export {
   computeTelemetryStats,
   formatStatsReport,
   getSessionSpend,
+  getHistoricalSuccessRate,
   loadAllTelemetryRecords,
   loadTelemetryRecords,
 } from "./telemetry/stats.js";
+export type { HistoricalSuccessRate } from "./telemetry/stats.js";
 
 export { runDoctor } from "./doctor/health.js";
 export type { DoctorCheck, DoctorReport } from "./doctor/health.js";

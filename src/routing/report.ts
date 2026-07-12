@@ -1,5 +1,8 @@
-import type { ModelTier, RoutingDecision, TaskAnalysis } from "../types.js";
+import type { ModelTier, RoutingDecision, RouterConfig, TaskAnalysis } from "../types.js";
 import type { ProbeSnapshot } from "../provider/probe.js";
+import { getPrimaryEndpoint } from "../config/tier-config.js";
+import { buildDecisionExplanation, type DecisionExplanation } from "./explanation.js";
+import { getHistoricalSuccessRate } from "../telemetry/stats.js";
 
 export interface RoutingReport {
   tier: ModelTier;
@@ -18,14 +21,43 @@ export interface RoutingReport {
     unavailable_tiers: ModelTier[];
     results: ProbeSnapshot[];
   } | null;
+  explanation: DecisionExplanation;
 }
 
 export function buildRoutingReport(input: {
   routing: RoutingDecision;
   analysis: TaskAnalysis;
   probe?: { unavailable: Set<ModelTier>; results: ProbeSnapshot[] };
+  contextTokens?: number;
+  config?: RouterConfig;
 }): RoutingReport {
-  const { routing, analysis, probe } = input;
+  const { routing, analysis, probe, contextTokens, config } = input;
+
+  const historical =
+    config?.telemetry?.enabled
+      ? getHistoricalSuccessRate(
+          config.telemetry.logPath,
+          analysis.taskType,
+          routing.tier
+        )
+      : null;
+
+  let fallbackModel: string | undefined;
+  if (routing.fallbackTier && config) {
+    try {
+      fallbackModel = getPrimaryEndpoint(config, routing.fallbackTier).model;
+    } catch {
+      fallbackModel = undefined;
+    }
+  }
+
+  const explanation = buildDecisionExplanation({
+    routing,
+    analysis,
+    contextTokens,
+    historical,
+    fallbackModel,
+  });
 
   return {
     tier: routing.tier,
@@ -46,6 +78,7 @@ export function buildRoutingReport(input: {
           results: probe.results,
         }
       : null,
+    explanation,
   };
 }
 
@@ -56,5 +89,6 @@ export function enrichAskResponse(
   return {
     ...base,
     routing: report,
+    explanation: report.explanation,
   };
 }

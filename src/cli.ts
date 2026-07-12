@@ -114,20 +114,37 @@ async function main(): Promise<void> {
 
     if (command === "route" || command === "dry-run") {
       const messages = readMessages(flags, positional);
+      const config = loadConfig(typeof flags.config === "string" ? flags.config : undefined);
       const result = await dryRunRoute(
         {
           messages,
           taskHints: parseTaskHints(flags),
           overrides: { ...overrides, dryRunRouting: command === "dry-run" || overrides.dryRunRouting },
         },
-        { configPath: typeof flags.config === "string" ? flags.config : undefined }
+        { config }
       );
 
       if (json) {
-        const { buildRoutingReport } = await import("./routing/report.js");
-        console.log(JSON.stringify(buildRoutingReport({ routing: result.routing, analysis: result.analysis, probe: result.probe }), null, 2));
+        const chars = messages.map((m) => m.content).join("\n").length;
+        const report = buildRoutingReport({
+          routing: result.routing,
+          analysis: result.analysis,
+          probe: result.probe,
+          contextTokens: Math.ceil(chars / 4),
+          config,
+        });
+        console.log(JSON.stringify(report, null, 2));
       } else {
         printRouteResult(result, true);
+        const chars = messages.map((m) => m.content).join("\n").length;
+        const report = buildRoutingReport({
+          routing: result.routing,
+          analysis: result.analysis,
+          probe: result.probe,
+          contextTokens: Math.ceil(chars / 4),
+          config,
+        });
+        console.log("\n" + report.explanation.markdown);
       }
       return;
     }

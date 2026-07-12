@@ -17,17 +17,20 @@ cd maestro-ai
 npm install    # runs prepare → build
 ```
 
-### Option B — npm (when published)
+### Option B — npm (published package)
 
 ```bash
 npm install -g maestro-ai
+maestro init
 ```
 
-### Option C — run without global install
+Or without a global install:
 
 ```bash
 npx maestro-ai init --profile ollama-only
 ```
+
+Package: https://www.npmjs.com/package/maestro-ai
 
 ## First-time setup
 

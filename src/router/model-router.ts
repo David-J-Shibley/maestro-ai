@@ -14,6 +14,7 @@ import {
   resolveBudgetStatus,
   type BudgetStatus,
 } from "../routing/budget.js";
+import { applyRoutingPolicy } from "../config/policy.js";
 
 export interface RouteInput {
   analysis: TaskAnalysis;
@@ -22,6 +23,7 @@ export interface RouteInput {
   taskHints?: TaskHints;
   unavailableTiers?: Set<ModelTier>;
   tierStatuses?: Map<ModelTier, TierProbeStatus>;
+  userPrompt?: string;
 }
 
 function pushDebug(debug: string[], line: string): void {
@@ -93,6 +95,20 @@ export function routeTask(input: RouteInput): RoutingDecision {
   ) {
     tier = "local_strong";
     reasons.push("preferLocal bumped easy low-risk task to local_strong");
+  }
+
+  const policyApplied = applyRoutingPolicy(
+    tier,
+    analysis,
+    config.policy,
+    input.userPrompt
+  );
+  if (policyApplied.tier !== tier) {
+    tier = policyApplied.tier;
+  }
+  for (const note of policyApplied.notes) {
+    pushDebug(debug, `policy: ${note}`);
+    reasons.push(note);
   }
 
   if (session?.maxTier) {

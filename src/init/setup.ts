@@ -122,6 +122,12 @@ export async function runInit(options: InitOptions = {}): Promise<InitReport> {
     copyFileSync(litellmYamlSource, litellmYamlDest);
   }
 
+  const policySource = join(packageRoot(), "config", "default.policy.json");
+  const policyDest = join(home, "policy.json");
+  if (existsSync(policySource) && (!existsSync(policyDest) || options.force)) {
+    copyFileSync(policySource, policyDest);
+  }
+
   const envExampleSource = join(packageRoot(), ".env.example");
   const envExampleDest = join(home, ".env.example");
   if (existsSync(envExampleSource) && (!existsSync(envExampleDest) || options.force)) {

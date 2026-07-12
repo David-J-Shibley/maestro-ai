@@ -86,6 +86,7 @@ export async function routedLLMCall(
     taskHints: input.taskHints,
     unavailableTiers: unavailable,
     tierStatuses: statuses,
+    userPrompt,
   });
 
   if (input.modelTier) {
@@ -96,6 +97,7 @@ export async function routedLLMCall(
       taskHints: input.taskHints,
       unavailableTiers: unavailable,
       tierStatuses: statuses,
+      userPrompt,
     });
   }
 
@@ -274,8 +276,10 @@ export async function dryRunRoute(
   const config = options.config ?? loadConfig(options.configPath);
   const overrides = mergeOverrides(input.overrides, options.overrides);
 
+  const userPrompt = extractUserPrompt(input.messages);
+
   const analysis = analyzeTask({
-    userPrompt: extractUserPrompt(input.messages),
+    userPrompt,
     systemPrompt: extractSystemPrompt(input.messages),
     tools: input.tools,
     responseSchema: input.responseSchema,
@@ -297,6 +301,7 @@ export async function dryRunRoute(
     taskHints: input.taskHints,
     unavailableTiers: unavailable,
     tierStatuses: tierStatusMap(probe),
+    userPrompt,
   });
 
   return { analysis, routing, probe };

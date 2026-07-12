@@ -95,12 +95,33 @@ export interface RouterOverrides {
   session?: SessionPolicy;
 }
 
+export interface SensitiveCodePolicy {
+  enabled: boolean;
+  max_tier: ModelTier;
+  reason?: string;
+}
+
+export interface PrivacyPolicyRule {
+  keywords: string[];
+  max_tier: ModelTier;
+  reason?: string;
+}
+
+export interface RoutingPolicy {
+  task_type_tiers?: Partial<Record<TaskType, ModelTier>>;
+  privacy?: PrivacyPolicyRule;
+  sensitive_code_local_only?: SensitiveCodePolicy;
+  latency_target_ms?: number | null;
+}
+
 export interface RouterConfig {
   models: Record<ModelTier, TierModelConfig>;
   routing: RoutingConfig;
   telemetry: TelemetryConfig;
   /** Optional premium model pool for future rotation */
   premiumPool?: ModelEndpointConfig[];
+  /** Loaded from policy.json — declarative routing rules */
+  policy?: RoutingPolicy | null;
 }
 
 export interface RoutingDecision {

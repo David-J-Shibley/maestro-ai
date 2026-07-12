@@ -61,24 +61,30 @@ export function buildOverrides(input: RouteToolInput): RouterOverrides {
 
 export async function handleRouteTool(input: RouteToolInput) {
   const messages = buildMessages(input.prompt, input.system_prompt);
+  const config = loadConfig(input.config_path);
   const result = await dryRunRoute(
     {
       messages,
       taskHints: buildTaskHints(input),
       overrides: buildOverrides(input),
     },
-    { configPath: input.config_path }
+    { config }
   );
+
+  const contextTokens = estimateContextTokens(messages);
 
   return buildRoutingReport({
     routing: result.routing,
     analysis: result.analysis,
     probe: result.probe,
+    contextTokens,
+    config,
   });
 }
 
 export async function handleAskTool(input: AskToolInput) {
   const messages = buildMessages(input.prompt, input.system_prompt);
+  const config = loadConfig(input.config_path);
   const overrides = {
     ...buildOverrides(input),
     dryRunRouting: input.dry_run ?? false,
@@ -91,13 +97,15 @@ export async function handleAskTool(input: AskToolInput) {
       taskHints: buildTaskHints(input),
       overrides,
     },
-    { configPath: input.config_path }
+    { config }
   );
 
   const report = buildRoutingReport({
     routing: result.routing,
     analysis: result.analysis,
     probe: result.probe,
+    contextTokens: estimateContextTokens(messages),
+    config,
   });
 
   if (input.dry_run) {
@@ -185,4 +193,9 @@ export async function handleFeedbackTool(input: FeedbackToolInput) {
     feedback_id: feedbackId,
     telemetry_id: input.telemetry_id,
   };
+}
+
+function estimateContextTokens(messages: ChatMessage[]): number {
+  const chars = messages.map((m) => m.content).join("\n").length;
+  return Math.ceil(chars / 4);
 }

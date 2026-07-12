@@ -10,7 +10,7 @@ describe("MCP route tool", () => {
     expect(result.analysis.taskType).toBe("code_edit");
   });
 
-  it("returns full routing report with debug and probe", async () => {
+  it("returns full routing report with debug, probe, and explanation", async () => {
     const result = await handleRouteTool({
       prompt: "Summarize this paragraph in two sentences.",
     });
@@ -18,6 +18,9 @@ describe("MCP route tool", () => {
     expect(result.analysis).toBeTruthy();
     expect(result.debug.length).toBeGreaterThan(0);
     expect(result.probe).toBeTruthy();
+    expect(result.explanation).toBeTruthy();
+    expect(result.explanation.why.length).toBeGreaterThan(0);
+    expect(result.explanation.markdown).toContain("Maestro Decision");
   });
 
   it("routes model-router demo meta prompts to local_fast", async () => {
