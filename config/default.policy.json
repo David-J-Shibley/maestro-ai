@@ -27,5 +27,20 @@
     "max_tier": "local_strong",
     "reason": "High-risk code tasks stay local when policy enabled"
   },
-  "latency_target_ms": null
+  "latency_target_ms": 8000,
+  "guardrails": {
+    "budget": {
+      "enabled": true,
+      "warn_remaining_usd": 0.10
+    },
+    "privacy": {
+      "enabled": true,
+      "block_cloud": true
+    },
+    "latency": {
+      "enabled": true,
+      "target_ms": 8000,
+      "prefer_faster_tier": true
+    }
+  }
 }

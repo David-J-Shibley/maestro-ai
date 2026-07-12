@@ -2,8 +2,9 @@ import type { ModelTier, RoutingDecision, TaskAnalysis, TaskType, ValidationOutc
 import { nextTier } from "../types.js";
 import { isLocalTier } from "../types.js";
 import { formatOutcomeMarkdown } from "./outcome.js";
+import { formatGuardrailsMarkdown } from "./guardrails.js";
 import { getModeProfile } from "./modes.js";
-import type { RoutingMode } from "../types.js";
+import type { GuardrailResult, RoutingMode } from "../types.js";
 
 export interface HistoricalContext {
   sampleSize: number;
@@ -41,6 +42,7 @@ export interface DecisionExplanation {
   budget_note?: string;
   /** Present after maestro_ask / routedLLMCall when evaluator ran. */
   outcome?: ValidationOutcome;
+  guardrails?: GuardrailResult[];
 }
 
 const TIER_LABELS: Record<ModelTier, string> = {
@@ -95,6 +97,12 @@ export function buildDecisionExplanation(input: {
       why.push(humanizeRule(line.slice(5).trim(), selectedTier));
     } else if (line.startsWith("mode:")) {
       why.push(line.slice(5).trim());
+    } else if (line.startsWith("guardrail:")) {
+      const parts = line.slice("guardrail:".length).split(":");
+      const kind = parts[0] ?? "guardrail";
+      const action = parts[1] ?? "";
+      const message = parts.slice(2).join(":").trim();
+      why.push(`Guardrail (${kind}${action ? `/${action}` : ""}): ${message}`);
     } else if (line.startsWith("policy:") || line.startsWith("Policy:")) {
       why.push(line.replace(/^policy:\s*/i, "Policy: "));
     } else if (line.includes("budget")) {
@@ -166,6 +174,7 @@ export function buildDecisionExplanation(input: {
     budgetNote,
     outcome,
     modeLabel,
+    guardrails: routing.guardrails,
   });
 
   return {
@@ -194,6 +203,7 @@ export function buildDecisionExplanation(input: {
     budget_note: budgetNote,
     mode: routing.mode,
     outcome,
+    guardrails: routing.guardrails,
   };
 }
 
@@ -260,6 +270,7 @@ function formatMarkdown(input: {
   budgetNote?: string;
   outcome?: ValidationOutcome;
   modeLabel?: string;
+  guardrails?: GuardrailResult[];
 }): string {
   const lines = [
     "🎼 Maestro Decision",
@@ -307,6 +318,11 @@ function formatMarkdown(input: {
 
   if (input.outcome) {
     lines.push(formatOutcomeMarkdown(input.outcome));
+  }
+
+  const guardrailsMd = formatGuardrailsMarkdown(input.guardrails);
+  if (guardrailsMd) {
+    lines.push(guardrailsMd);
   }
 
   if (input.budgetNote) {

@@ -33,6 +33,7 @@ export interface RoutingReport {
   } | null;
   explanation: DecisionExplanation;
   mode?: import("../types.js").RoutingMode;
+  guardrails?: RoutingDecision["guardrails"];
 }
 
 export function buildRoutingReport(input: {
@@ -106,6 +107,7 @@ export function buildRoutingReport(input: {
       : null,
     explanation,
     mode: routing.mode,
+    guardrails: routing.guardrails,
   };
 }
 

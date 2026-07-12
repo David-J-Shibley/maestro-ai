@@ -6,7 +6,8 @@ import type {
   SessionPolicy,
   TaskAnalysis,
 } from "../types.js";
-import { capTier, floorTier, isLocalTier, TIER_ORDER } from "../types.js";
+import { capTier, floorTier, TIER_ORDER } from "../types.js";
+import { tierMeetsTask } from "./tier-fit.js";
 
 export const ROUTING_MODES = [
   "balanced",
@@ -274,35 +275,6 @@ function nudgeTierUp(
     if (tierMeetsTask(analysis, candidate)) return candidate;
   }
   return tier;
-}
-
-function tierMeetsTask(analysis: TaskAnalysis, tier: ModelTier): boolean {
-  if (tier === "premium") return true;
-  if (tier === "hosted_oss") {
-    return !(
-      analysis.difficulty === "hard" ||
-      analysis.riskLevel === "high" ||
-      analysis.taskType === "architecture"
-    );
-  }
-  if (tier === "local_strong") {
-    return !(
-      analysis.difficulty === "hard" ||
-      analysis.riskLevel === "high" ||
-      analysis.taskType === "architecture" ||
-      (analysis.requiresToolUse && analysis.requiresCodeReasoning && analysis.difficulty === "medium")
-    );
-  }
-  if (tier === "local_fast") {
-    return (
-      analysis.difficulty === "easy" &&
-      analysis.riskLevel !== "high" &&
-      analysis.taskType !== "architecture" &&
-      !analysis.requiresLongContext &&
-      !(analysis.requiresToolUse && analysis.requiresCodeReasoning)
-    );
-  }
-  return isLocalTier(tier);
 }
 
 export function getModeProfile(mode: RoutingMode): ModeProfile {

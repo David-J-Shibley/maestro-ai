@@ -160,6 +160,18 @@ maestro ask "refactor auth module" --mode local-only --json
 
 MCP: pass `mode` on `maestro_route` / `maestro_ask`. Telemetry and `maestro stats` report per-mode success rates.
 
+### Guardrails (v0.8+)
+
+Declarative safety layer in `policy.json` → `guardrails`:
+
+| Guardrail | Behavior |
+|-----------|----------|
+| `budget` | Warn when session budget is low; cap/block when exhausted |
+| `privacy` | Block cloud tiers when sensitive keywords match |
+| `latency` | Use probe latency to prefer faster tiers within `target_ms` |
+
+Guardrail actions appear in the decision card under **Guardrails**.
+
 ### Routing policy
 
 Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):

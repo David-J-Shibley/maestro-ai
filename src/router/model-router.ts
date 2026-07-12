@@ -22,6 +22,7 @@ import {
   resolveModeConstraints,
   type ModeConstraints,
 } from "../routing/modes.js";
+import { applyGuardrails } from "../routing/guardrails.js";
 
 export interface RouteInput {
   analysis: TaskAnalysis;
@@ -167,6 +168,19 @@ export function routeTask(input: RouteInput): RoutingDecision {
     tier = applyBudgetToTier(tier, budget, debug);
   }
 
+  const guardrails = applyGuardrails({
+    tier,
+    analysis,
+    policy: config.policy,
+    budget,
+    tierStatuses,
+    userPrompt: input.userPrompt,
+  });
+  tier = guardrails.tier;
+  for (const g of guardrails.results) {
+    pushDebug(debug, `guardrail:${g.kind}:${g.action}: ${g.message}`);
+  }
+
   for (const r of reasons) pushDebug(debug, `rule: ${r}`);
 
   return buildDecision(
@@ -179,7 +193,8 @@ export function routeTask(input: RouteInput): RoutingDecision {
     reasons.join("; "),
     budget,
     activeMode,
-    modeConstraints
+    modeConstraints,
+    guardrails.results
   );
 }
 
@@ -308,7 +323,8 @@ function buildDecision(
   reason?: string,
   budget?: BudgetStatus | null,
   mode?: import("../types.js").RoutingMode,
-  modeConstraints?: ModeConstraints
+  modeConstraints?: ModeConstraints,
+  guardrails?: import("../types.js").GuardrailResult[]
 ): RoutingDecision {
   const { tier, availabilityReason } = resolveAvailableTier(
     requestedTier,
@@ -349,6 +365,7 @@ function buildDecision(
     endpointSource: resolved?.source,
     debug,
     mode,
+    guardrails: guardrails?.length ? guardrails : undefined,
     budget: budget
       ? {
           session_id: budget.sessionId,

@@ -8,6 +8,7 @@ import { computeTelemetryStats, formatStatsReport, loadTelemetryRecords } from "
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
+import { formatProbeSummary } from "./routing/probe-summary.js";
 import { isRoutingMode } from "./routing/modes.js";
 import { PACKAGE_VERSION } from "./version.js";
 
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
         });
         console.log(JSON.stringify(report, null, 2));
       } else {
-        printRouteResult(result, true);
+        printRouteResult(result, { debug: true, fullProbe: false });
         const chars = messages.map((m) => m.content).join("\n").length;
         const report = buildRoutingReport({
           routing: result.routing,
@@ -181,7 +182,10 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(result, null, 2));
       } else {
         if (overrides.debug) {
-          printRouteResult({ analysis: result.analysis, routing: result.routing }, true);
+          printRouteResult(
+            { analysis: result.analysis, routing: result.routing },
+            { debug: true, fullProbe: false }
+          );
         }
         console.log(result.response.content);
         if (overrides.debug) {
@@ -258,10 +262,19 @@ function parseTaskHints(flags: Record<string, string | boolean>) {
 }
 
 function printRouteResult(
-  result: { analysis: import("./types.js").TaskAnalysis; routing: import("./types.js").RoutingDecision; probe?: unknown },
-  debug: boolean
+  result: {
+    analysis: import("./types.js").TaskAnalysis;
+    routing: import("./types.js").RoutingDecision;
+    probe?: {
+      unavailable?: Set<import("./types.js").ModelTier> | import("./types.js").ModelTier[];
+      tiers?: import("./provider/probe.js").TierProbeStatus[];
+      results?: unknown[];
+    };
+  },
+  options: { debug?: boolean; fullProbe?: boolean } = {}
 ): void {
   const { analysis, routing } = result;
+  const debug = options.debug ?? false;
   console.log("Maestro AI Routing Decision");
   console.log("===========================");
   console.log(`Tier:     ${routing.tier}`);
@@ -291,9 +304,14 @@ function printRouteResult(
     for (const line of routing.debug) console.log(`  - ${line}`);
   }
 
-  if (result.probe) {
-    console.log("\nProbe results:");
-    console.log(JSON.stringify(result.probe, null, 2));
+  if (result.probe && debug) {
+    console.log("\nProbe:");
+    if (options.fullProbe) {
+      console.log(JSON.stringify(result.probe, null, 2));
+    } else {
+      console.log(`  ${formatProbeSummary(result.probe)}`);
+      console.log("  (use --json for full probe data)");
+    }
   }
 }
 
@@ -322,7 +340,7 @@ Flags:
   --prefer-local           Prefer local tiers when possible
   --premium-only           Always use premium tier
   --dry-run-routing        Print routing only, no LLM call
-  --debug                  Verbose routing explanation
+  --debug                  Verbose routing explanation (compact probe summary)
   --json                   JSON output
   --config <path>          Config file path
   --system <text>          System prompt

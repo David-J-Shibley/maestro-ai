@@ -119,11 +119,38 @@ export interface PrivacyPolicyRule {
   reason?: string;
 }
 
+export type GuardrailKind = "budget" | "privacy" | "latency";
+export type GuardrailAction = "allow" | "warn" | "cap" | "block";
+
+export interface GuardrailResult {
+  kind: GuardrailKind;
+  action: GuardrailAction;
+  message: string;
+  detail?: string;
+}
+
+export interface GuardrailsPolicy {
+  budget?: {
+    enabled?: boolean;
+    warn_remaining_usd?: number;
+  };
+  privacy?: {
+    enabled?: boolean;
+    block_cloud?: boolean;
+  };
+  latency?: {
+    enabled?: boolean;
+    target_ms?: number | null;
+    prefer_faster_tier?: boolean;
+  };
+}
+
 export interface RoutingPolicy {
   task_type_tiers?: Partial<Record<TaskType, ModelTier>>;
   privacy?: PrivacyPolicyRule;
   sensitive_code_local_only?: SensitiveCodePolicy;
   latency_target_ms?: number | null;
+  guardrails?: GuardrailsPolicy;
 }
 
 export interface RouterConfig {
@@ -149,6 +176,7 @@ export interface RoutingDecision {
   debug?: string[];
   /** Active routing mode for this decision */
   mode?: RoutingMode;
+  guardrails?: GuardrailResult[];
   budget?: {
     session_id: string;
     budget_usd: number;

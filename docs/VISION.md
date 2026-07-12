@@ -70,7 +70,15 @@ Operator control plane before workflow orchestration. Modes reuse policy/router/
 
 Telemetry tracks mode distribution and per-mode success rates — e.g. *"cheapest failed 12% more often than balanced."*
 
-### v0.8 — Budget / Privacy / Latency Guardrails
+### v0.8 — Budget / Privacy / Latency Guardrails ✅ (shipped)
+
+Unified guardrail layer after routing modes:
+
+- **Budget** — warn when session budget is low; block/cap when exhausted
+- **Privacy** — detect sensitive keywords; block cloud tiers when matched
+- **Latency** — use probe data to prefer faster tiers within `target_ms`
+
+Configurable in `~/.maestro-ai/policy.json` under `guardrails`. Decisions show a **Guardrails** section in explanations.
 
 ### v0.9 — Learned Routing Prep / Telemetry Analysis
 

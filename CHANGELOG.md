@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-12
+
+### Added
+- **Guardrails engine** (`src/routing/guardrails.ts`) — budget, privacy, and latency guardrails applied after routing/modes.
+- `guardrails` section in `policy.json` with per-guardrail enable/target settings.
+- **Guardrails** section in decision explanations and routing reports.
+- **Compact probe summary** in CLI `--debug` (full probe data still in `--json`).
+- Tests: `tests/guardrails.test.ts`, `tests/probe-summary.test.ts`.
+- Shared `tierMeetsTask()` in `src/routing/tier-fit.ts`.
+
+[0.8.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.8.0
+
 ## [0.7.1] - 2026-07-12
 
 ### Added

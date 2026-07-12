@@ -19,6 +19,8 @@ export type {
   RouterOverrides,
   RoutingConfig,
   RoutingDecision,
+  GuardrailResult,
+  GuardrailsPolicy,
   RoutingMode,
   RoutingPolicy,
   SessionPolicy,
@@ -97,6 +99,12 @@ export {
   resolveModeConstraints,
 } from "./routing/modes.js";
 export type { ModeConstraints, ModeProfile } from "./routing/modes.js";
+export {
+  applyGuardrails,
+  formatGuardrailsMarkdown,
+} from "./routing/guardrails.js";
+export { formatProbeSummary } from "./routing/probe-summary.js";
+export { tierMeetsTask } from "./routing/tier-fit.js";
 export {
   applyBudgetToTier,
   canEscalateWithinBudget,
