@@ -32,6 +32,7 @@ export interface RoutingReport {
     results: ProbeSnapshot[];
   } | null;
   explanation: DecisionExplanation;
+  mode?: import("../types.js").RoutingMode;
 }
 
 export function buildRoutingReport(input: {
@@ -104,6 +105,7 @@ export function buildRoutingReport(input: {
         }
       : null,
     explanation,
+    mode: routing.mode,
   };
 }
 

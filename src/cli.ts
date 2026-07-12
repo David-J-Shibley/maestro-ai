@@ -8,6 +8,7 @@ import { computeTelemetryStats, formatStatsReport, loadTelemetryRecords } from "
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
+import { isRoutingMode } from "./routing/modes.js";
 
 function parseArgs(argv: string[]): {
   command: string;
@@ -70,6 +71,8 @@ function buildOverrides(flags: Record<string, string | boolean>): RouterOverride
 
   return {
     modelTier: typeof flags["model-tier"] === "string" ? (flags["model-tier"] as ModelTier) : undefined,
+    mode:
+      typeof flags.mode === "string" && isRoutingMode(flags.mode) ? flags.mode : undefined,
     preferLocal: flags["prefer-local"] === true || flags["prefer-local"] === "true",
     premiumOnly: flags["premium-only"] === true,
     dryRunRouting: flags["dry-run-routing"] === true,
@@ -312,6 +315,7 @@ Flags:
   --file <path>            JSON file with { messages: [...] }
   --messages <json>        Inline messages JSON
   --task-type <type>       Task hint (code_edit, summarization, ...)
+  --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
   --quality <fast|balanced|best>
   --risk <low|medium|high>
   --schema <json>          Response JSON schema object

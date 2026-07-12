@@ -11,6 +11,11 @@ import { chatCompletion, ProviderError } from "./provider/openai-compatible.js";
 import { probeAllTiers, type TierProbeStatus } from "./provider/probe.js";
 import { routeTask } from "./router/model-router.js";
 import { annotateAttemptActions, buildAttemptLog } from "./routing/outcome.js";
+import {
+  applyModeToRuntime,
+  canEscalateWithinMode,
+  resolveActiveMode,
+} from "./routing/modes.js";
 import { estimateCostUsd, logTelemetry } from "./telemetry/logger.js";
 import {
   canEscalateWithinBudget,
@@ -58,7 +63,12 @@ export async function routedLLMCall(
   options: RoutedLLMCallOptions = {}
 ): Promise<RoutedLLMCallResult & { probe?: DryRunResult["probe"] }> {
   const config = options.config ?? loadConfig(options.configPath);
-  const overrides = mergeOverrides(input.overrides, options.overrides);
+  const baseOverrides = mergeOverrides(input.overrides, options.overrides);
+  const activeMode = resolveActiveMode(baseOverrides, config);
+  const runtime = applyModeToRuntime(activeMode, config, baseOverrides);
+  const overrides = runtime.overrides;
+  const effectiveConfig: RouterConfig = { ...config, routing: runtime.routing };
+  const modeConstraints = runtime.constraints;
 
   const userPrompt = extractUserPrompt(input.messages);
   const systemPrompt = extractSystemPrompt(input.messages);
@@ -73,17 +83,17 @@ export async function routedLLMCall(
 
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
   let unavailable = new Set<ModelTier>();
-  if (config.routing.probeAvailability) {
-    probe = await probeAllTiers(config);
+  if (effectiveConfig.routing.probeAvailability) {
+    probe = await probeAllTiers(effectiveConfig);
     unavailable = probe.unavailable;
   }
 
   const statuses = tierStatusMap(probe);
-  const budget = resolveBudgetStatus(overrides?.session, config);
+  const budget = resolveBudgetStatus(overrides?.session, effectiveConfig);
 
   let decision = routeTask({
     analysis,
-    config,
+    config: effectiveConfig,
     overrides,
     taskHints: input.taskHints,
     unavailableTiers: unavailable,
@@ -94,7 +104,7 @@ export async function routedLLMCall(
   if (input.modelTier) {
     decision = routeTask({
       analysis,
-      config,
+      config: effectiveConfig,
       overrides: { ...overrides, modelTier: input.modelTier },
       taskHints: input.taskHints,
       unavailableTiers: unavailable,
@@ -116,14 +126,14 @@ export async function routedLLMCall(
   let lastEvaluation = evaluateResponse("", options.evaluatorContext ?? {});
   let totalAttempts = 0;
   let tierAttemptCount = 0;
-  const maxRetriesPerTier = config.routing.maxRetriesPerTier;
+  const maxRetriesPerTier = effectiveConfig.routing.maxRetriesPerTier;
   const maxAttempts =
-    config.routing.enableEscalation ? 4 * (maxRetriesPerTier + 1) : 1;
+    effectiveConfig.routing.enableEscalation ? 4 * (maxRetriesPerTier + 1) : 1;
 
   while (totalAttempts < maxAttempts) {
     const tierStatus = statuses.get(currentTier);
     const endpoint =
-      tierStatus?.effective?.endpoint ?? getPrimaryEndpoint(config, currentTier);
+      tierStatus?.effective?.endpoint ?? getPrimaryEndpoint(effectiveConfig, currentTier);
     const action: AttemptAction =
       totalAttempts === 0 ? "initial" : tierAttemptCount > 0 ? "retry" : "escalation";
     const attempt: RoutedAttempt = {
@@ -169,10 +179,13 @@ export async function routedLLMCall(
         continue;
       }
 
-      if (evaluation.escalationRecommended && config.routing.enableEscalation) {
+      if (evaluation.escalationRecommended && effectiveConfig.routing.enableEscalation) {
         const next = nextTier(currentTier);
         if (next && next !== currentTier) {
-          if (!canEscalateWithinBudget(next, budget)) {
+          if (
+            !canEscalateWithinBudget(next, budget) ||
+            !canEscalateWithinMode(next, modeConstraints)
+          ) {
             break;
           }
           currentTier = next;
@@ -191,7 +204,7 @@ export async function routedLLMCall(
       totalAttempts++;
 
       const shouldEscalate =
-        config.routing.enableEscalation &&
+        effectiveConfig.routing.enableEscalation &&
         (err instanceof ProviderError
           ? err.code === "timeout" ||
             err.code === "http" ||
@@ -202,7 +215,10 @@ export async function routedLLMCall(
       if (shouldEscalate) {
         const next = nextTier(currentTier);
         if (next && next !== currentTier) {
-          if (!canEscalateWithinBudget(next, budget)) {
+          if (
+            !canEscalateWithinBudget(next, budget) ||
+            !canEscalateWithinMode(next, modeConstraints)
+          ) {
             throw err;
           }
           currentTier = next;
@@ -225,14 +241,14 @@ export async function routedLLMCall(
 
   const finalStatus = statuses.get(currentTier);
   const finalEndpoint =
-    finalStatus?.effective?.endpoint ?? getPrimaryEndpoint(config, currentTier);
+    finalStatus?.effective?.endpoint ?? getPrimaryEndpoint(effectiveConfig, currentTier);
 
   const promptHash = hashPrompt(`${systemPrompt}\n${userPrompt}`);
   const sessionId =
     overrides?.session?.sessionId ??
     (overrides?.session?.budgetUsd !== undefined ? "anonymous" : undefined);
 
-  const telemetryId = logTelemetry(config, {
+  const telemetryId = logTelemetry(effectiveConfig, {
     promptHash,
     taskAnalysis: analysis,
     selectedTier: initialRouting.tier,
@@ -248,6 +264,7 @@ export async function routedLLMCall(
     attempts: totalAttempts,
     attemptLog,
     escalated,
+    mode: activeMode,
     sessionId,
     userFeedback: overrides?.userFeedback,
   });
@@ -282,7 +299,11 @@ export async function dryRunRoute(
   options: RoutedLLMCallOptions = {}
 ): Promise<DryRunResult> {
   const config = options.config ?? loadConfig(options.configPath);
-  const overrides = mergeOverrides(input.overrides, options.overrides);
+  const baseOverrides = mergeOverrides(input.overrides, options.overrides);
+  const activeMode = resolveActiveMode(baseOverrides, config);
+  const runtime = applyModeToRuntime(activeMode, config, baseOverrides);
+  const overrides = runtime.overrides;
+  const effectiveConfig: RouterConfig = { ...config, routing: runtime.routing };
 
   const userPrompt = extractUserPrompt(input.messages);
 
@@ -297,14 +318,14 @@ export async function dryRunRoute(
   let unavailable = new Set<ModelTier>();
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
 
-  if (config.routing.probeAvailability) {
-    probe = await probeAllTiers(config);
+  if (effectiveConfig.routing.probeAvailability) {
+    probe = await probeAllTiers(effectiveConfig);
     unavailable = probe.unavailable;
   }
 
   const routing = routeTask({
     analysis,
-    config,
+    config: effectiveConfig,
     overrides,
     taskHints: input.taskHints,
     unavailableTiers: unavailable,

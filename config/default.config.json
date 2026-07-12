@@ -50,6 +50,7 @@
   },
   "routing": {
     "defaultTier": "local_strong",
+    "defaultMode": "balanced",
     "maxRetriesPerTier": 1,
     "enableEscalation": true,
     "preferLocal": true,

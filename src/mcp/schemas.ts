@@ -19,6 +19,14 @@ export const taskTypeSchema = z.enum([
 export const qualitySchema = z.enum(["fast", "balanced", "best"]);
 export const riskSchema = z.enum(["low", "medium", "high"]);
 export const tierSchema = z.enum(["local_fast", "local_strong", "hosted_oss", "premium"]);
+export const modeSchema = z.enum([
+  "balanced",
+  "local-only",
+  "cheapest",
+  "fastest",
+  "best-quality",
+  "private",
+]);
 
 export const routeToolInputSchema = z.object({
   prompt: z
@@ -33,6 +41,11 @@ export const routeToolInputSchema = z.object({
     .describe("Optional system prompt to include in analysis."),
   task_type: taskTypeSchema.optional().describe("Optional task type hint."),
   quality: qualitySchema.optional().describe("Quality preference: fast, balanced, or best."),
+  mode: modeSchema
+    .optional()
+    .describe(
+      "Routing mode: balanced (default), local-only, cheapest, fastest, best-quality, or private."
+    ),
   risk: riskSchema.optional().describe("Risk level hint."),
   model_tier: tierSchema.optional().describe("Force a specific model tier."),
   prefer_local: z.boolean().optional().describe("Prefer local models when possible."),

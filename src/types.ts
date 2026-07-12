@@ -19,6 +19,14 @@ export type TaskType =
 
 export type QualityPreference = "fast" | "balanced" | "best";
 
+export type RoutingMode =
+  | "balanced"
+  | "local-only"
+  | "cheapest"
+  | "fastest"
+  | "best-quality"
+  | "private";
+
 export interface TaskHints {
   type?: TaskType;
   quality?: QualityPreference;
@@ -60,6 +68,8 @@ export interface ModelEndpointConfig {
 
 export interface RoutingConfig {
   defaultTier: ModelTier;
+  /** Operator control plane — default routing mode (v0.7+) */
+  defaultMode?: RoutingMode;
   maxRetriesPerTier: number;
   enableEscalation: boolean;
   preferLocal: boolean;
@@ -86,6 +96,8 @@ export interface SessionPolicy {
 }
 
 export interface RouterOverrides {
+  /** Operator routing mode — constrains tier selection and escalation (v0.7+) */
+  mode?: RoutingMode;
   modelTier?: ModelTier;
   preferLocal?: boolean;
   premiumOnly?: boolean;
@@ -135,6 +147,8 @@ export interface RoutingDecision {
   fallbackReason?: string;
   endpointSource?: "primary" | "tier_fallback";
   debug?: string[];
+  /** Active routing mode for this decision */
+  mode?: RoutingMode;
   budget?: {
     session_id: string;
     budget_usd: number;
@@ -221,6 +235,8 @@ export interface TelemetryRecord {
   attemptLog?: AttemptLogEntry[];
   /** True only when the call actually fell back to a higher tier. */
   escalated?: boolean;
+  /** Routing mode active for this call (v0.7+) */
+  mode?: RoutingMode;
   sessionId?: string;
   userFeedback?: string;
 }
@@ -297,6 +313,13 @@ export function capTier(tier: ModelTier, maxTier: ModelTier): ModelTier {
   const mi = TIER_ORDER.indexOf(maxTier);
   if (ti < 0 || mi < 0) return tier;
   return ti > mi ? maxTier : tier;
+}
+
+export function floorTier(tier: ModelTier, minTier: ModelTier): ModelTier {
+  const ti = TIER_ORDER.indexOf(tier);
+  const mi = TIER_ORDER.indexOf(minTier);
+  if (ti < 0 || mi < 0) return tier;
+  return ti < mi ? minTier : tier;
 }
 
 export function isLocalTier(tier: ModelTier): boolean {

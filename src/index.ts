@@ -19,6 +19,7 @@ export type {
   RouterOverrides,
   RoutingConfig,
   RoutingDecision,
+  RoutingMode,
   RoutingPolicy,
   SessionPolicy,
   TaskAnalysis,
@@ -31,7 +32,7 @@ export type {
   TierModelConfig,
 } from "./types.js";
 
-export { TIER_ORDER, capTier, isLocalTier, nextTier } from "./types.js";
+export { TIER_ORDER, capTier, floorTier, isLocalTier, nextTier } from "./types.js";
 
 export {
   analyzeTask,
@@ -83,6 +84,19 @@ export {
   formatOutcomeMarkdown,
   humanizeFailedChecks,
 } from "./routing/outcome.js";
+export {
+  ROUTING_MODES,
+  MODE_PROFILES,
+  DEFAULT_ROUTING_MODE,
+  applyModeToRuntime,
+  applyModeToTier,
+  canEscalateWithinMode,
+  getModeProfile,
+  isRoutingMode,
+  resolveActiveMode,
+  resolveModeConstraints,
+} from "./routing/modes.js";
+export type { ModeConstraints, ModeProfile } from "./routing/modes.js";
 export {
   applyBudgetToTier,
   canEscalateWithinBudget,

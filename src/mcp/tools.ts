@@ -51,6 +51,7 @@ export function buildSessionPolicy(input: RouteToolInput): SessionPolicy | undef
 
 export function buildOverrides(input: RouteToolInput): RouterOverrides {
   return {
+    mode: input.mode,
     modelTier: input.model_tier,
     preferLocal: input.prefer_local,
     premiumOnly: input.premium_only,

@@ -2,6 +2,8 @@ import type { ModelTier, RoutingDecision, TaskAnalysis, TaskType, ValidationOutc
 import { nextTier } from "../types.js";
 import { isLocalTier } from "../types.js";
 import { formatOutcomeMarkdown } from "./outcome.js";
+import { getModeProfile } from "./modes.js";
+import type { RoutingMode } from "../types.js";
 
 export interface HistoricalContext {
   sampleSize: number;
@@ -34,6 +36,8 @@ export interface DecisionExplanation {
   cost_note?: string;
   historical?: HistoricalContext;
   policy_notes?: string[];
+  /** Active routing mode for this decision */
+  mode?: RoutingMode;
   budget_note?: string;
   /** Present after maestro_ask / routedLLMCall when evaluator ran. */
   outcome?: ValidationOutcome;
@@ -87,6 +91,8 @@ export function buildDecisionExplanation(input: {
   for (const line of routing.debug ?? []) {
     if (line.startsWith("rule:")) {
       why.push(humanizeRule(line.slice(5).trim()));
+    } else if (line.startsWith("mode:") || line.startsWith("Mode ")) {
+      why.push(line.replace(/^mode:\s*/i, "Mode: "));
     } else if (line.startsWith("policy:") || line.startsWith("Policy:")) {
       why.push(line.replace(/^policy:\s*/i, "Policy: "));
     } else if (line.includes("budget")) {
@@ -141,7 +147,10 @@ export function buildDecisionExplanation(input: {
   }
 
   const taskLabel = TASK_LABELS[analysis.taskType] ?? analysis.taskType;
-  const summary = `${taskLabel} → ${routing.model} (${TIER_LABELS[routing.tier]})`;
+  const modeLabel = routing.mode ? getModeProfile(routing.mode).label : undefined;
+  const summary = modeLabel
+    ? `${modeLabel} · ${taskLabel} → ${routing.model} (${TIER_LABELS[routing.tier]})`
+    : `${taskLabel} → ${routing.model} (${TIER_LABELS[routing.tier]})`;
 
   const markdown = formatMarkdown({
     analysis,
@@ -152,6 +161,7 @@ export function buildDecisionExplanation(input: {
     fallback,
     budgetNote,
     outcome,
+    modeLabel,
   });
 
   return {
@@ -178,6 +188,7 @@ export function buildDecisionExplanation(input: {
     historical: historical ?? undefined,
     policy_notes: policyNotes?.length ? policyNotes : undefined,
     budget_note: budgetNote,
+    mode: routing.mode,
     outcome,
   };
 }
@@ -239,15 +250,23 @@ function formatMarkdown(input: {
   fallback?: { tier: ModelTier; model?: string };
   budgetNote?: string;
   outcome?: ValidationOutcome;
+  modeLabel?: string;
 }): string {
   const lines = [
     "🎼 Maestro Decision",
     "",
+  ];
+
+  if (input.modeLabel) {
+    lines.push(`**Mode:** ${input.modeLabel}`, "");
+  }
+
+  lines.push(
     "**Task**",
     `- Type: ${TASK_LABELS[input.analysis.taskType]}`,
     `- Difficulty: ${input.analysis.difficulty}`,
     `- Risk: ${input.analysis.riskLevel}`,
-  ];
+  );
 
   if (input.contextTokens) {
     lines.push(`- Context: ~${input.contextTokens.toLocaleString()} tokens`);

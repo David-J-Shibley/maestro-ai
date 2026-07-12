@@ -15,6 +15,12 @@ import {
   type BudgetStatus,
 } from "../routing/budget.js";
 import { applyRoutingPolicy } from "../config/policy.js";
+import {
+  applyModeToTier,
+  resolveActiveMode,
+  resolveModeConstraints,
+  type ModeConstraints,
+} from "../routing/modes.js";
 
 export interface RouteInput {
   analysis: TaskAnalysis;
@@ -34,12 +40,32 @@ export function routeTask(input: RouteInput): RoutingDecision {
   const { analysis, config, overrides, taskHints, unavailableTiers, tierStatuses } = input;
   const debug: string[] = [];
   const session = overrides?.session;
+  const activeMode = resolveActiveMode(overrides, config);
+  const modeConstraints = resolveModeConstraints(activeMode);
   const preferLocal =
-    session?.alwaysPreferLocal ?? overrides?.preferLocal ?? config.routing.preferLocal;
+    session?.alwaysPreferLocal ??
+    overrides?.preferLocal ??
+    modeConstraints.preferLocal ??
+    config.routing.preferLocal;
+
+  if (modeConstraints.notes.length) {
+    for (const note of modeConstraints.notes) pushDebug(debug, `mode: ${note}`);
+  }
 
   if (overrides?.premiumOnly) {
     pushDebug(debug, "override: premium-only");
-    return buildDecision("premium", config, analysis, debug, unavailableTiers, tierStatuses);
+    return buildDecision(
+      "premium",
+      config,
+      analysis,
+      debug,
+      unavailableTiers,
+      tierStatuses,
+      undefined,
+      null,
+      activeMode,
+      modeConstraints
+    );
   }
 
   if (overrides?.modelTier) {
@@ -50,7 +76,11 @@ export function routeTask(input: RouteInput): RoutingDecision {
       analysis,
       debug,
       unavailableTiers,
-      tierStatuses
+      tierStatuses,
+      undefined,
+      null,
+      activeMode,
+      modeConstraints
     );
   }
 
@@ -63,7 +93,10 @@ export function routeTask(input: RouteInput): RoutingDecision {
       debug,
       unavailableTiers,
       tierStatuses,
-      "user hint: best quality"
+      "user hint: best quality",
+      null,
+      activeMode,
+      modeConstraints
     );
   }
 
@@ -119,6 +152,13 @@ export function routeTask(input: RouteInput): RoutingDecision {
     }
   }
 
+  const modeAdjusted = applyModeToTier(tier, analysis, modeConstraints);
+  tier = modeAdjusted.tier;
+  for (const note of modeAdjusted.notes) {
+    if (!note.startsWith("Mode ")) pushDebug(debug, `mode: ${note}`);
+    else pushDebug(debug, note);
+  }
+
   const budget = resolveBudgetStatus(session, config);
   if (budget) {
     if (!session?.sessionId) {
@@ -137,7 +177,9 @@ export function routeTask(input: RouteInput): RoutingDecision {
     unavailableTiers,
     tierStatuses,
     reasons.join("; "),
-    budget
+    budget,
+    activeMode,
+    modeConstraints
   );
 }
 
@@ -264,7 +306,9 @@ function buildDecision(
   unavailableTiers?: Set<ModelTier>,
   tierStatuses?: Map<ModelTier, TierProbeStatus>,
   reason?: string,
-  budget?: BudgetStatus | null
+  budget?: BudgetStatus | null,
+  mode?: import("../types.js").RoutingMode,
+  modeConstraints?: ModeConstraints
 ): RoutingDecision {
   const { tier, availabilityReason } = resolveAvailableTier(
     requestedTier,
@@ -304,6 +348,7 @@ function buildDecision(
     fallbackReason,
     endpointSource: resolved?.source,
     debug,
+    mode,
     budget: budget
       ? {
           session_id: budget.sessionId,

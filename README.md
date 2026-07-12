@@ -140,6 +140,26 @@ Why: local output was incomplete
 
 Telemetry records include an `attemptLog` with per-attempt pass/fail and failed checks.
 
+### Routing modes (v0.7+)
+
+Operator control plane — one flag constrains tier selection, escalation, and retries:
+
+| Mode | Behavior |
+|------|----------|
+| `balanced` | Default (cost-aware heuristics + escalation) |
+| `local-only` | Cap at `local_strong` — no cloud |
+| `cheapest` | Prefer local tiers, nudge to lowest viable |
+| `fastest` | Favor `local_fast`, no same-tier retries |
+| `best-quality` | Bias toward premium / hosted OSS |
+| `private` | Localhost only, privacy policy enforced |
+
+```bash
+maestro route "summarize this" --mode cheapest --debug
+maestro ask "refactor auth module" --mode local-only --json
+```
+
+MCP: pass `mode` on `maestro_route` / `maestro_ask`. Telemetry and `maestro stats` report per-mode success rates.
+
 ### Routing policy
 
 Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):

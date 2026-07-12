@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-12
+
+### Added
+- **Routing modes** — operator control plane: `balanced`, `local-only`, `cheapest`, `fastest`, `best-quality`, `private`.
+- `src/routing/modes.ts` — mode constraints applied to router, escalation, and retries.
+- `mode` field on MCP tools (`maestro_route`, `maestro_ask`), CLI (`--mode`), and telemetry.
+- Per-mode success rates in `maestro stats` (`modeDistribution`, `modeSuccessRates`).
+- Mode shown in decision explanations (`explanation.mode`, markdown **Mode:** line).
+- `defaultMode` in config (`balanced` by default).
+- Tests: `tests/modes.test.ts`.
+
+### Changed
+- Escalation respects mode `maxTier` (e.g. `local-only` cannot escalate to cloud).
+- `fastest` mode sets `maxRetriesPerTier: 0`.
+
+[0.7.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.7.0
+
 ## [0.6.0] - 2026-07-12
 
 ### Added

@@ -55,14 +55,24 @@ Evaluator → validation result → retry same tier → escalate next tier → e
 - Killer decision card: Selected → Validation failed → Escalated to → Final result → Why
 - Per-attempt `attemptLog` in telemetry
 
-Example policy intent:
+### v0.7 — Routing Modes ✅ (shipped)
 
-| Situation | Policy |
-|-----------|--------|
-| Sensitive code / secrets in prompt | Never leaves localhost |
-| Creative writing | Premium tier |
-| Code generation | Hosted OSS (Qwen Coder) |
-| Summarization | Local strong |
+Operator control plane before workflow orchestration. Modes reuse policy/router/evaluator and become constraints for v1.0.
+
+| Mode | Intent |
+|------|--------|
+| `balanced` | Default heuristics (current behavior) |
+| `local-only` | Never above `local_strong` |
+| `cheapest` | Minimize cost, nudge to lowest viable tier |
+| `fastest` | Favor `local_fast`, skip same-tier retries |
+| `best-quality` | Allow premium, bias toward higher tiers |
+| `private` | Localhost only + privacy policy enforced |
+
+Telemetry tracks mode distribution and per-mode success rates — e.g. *"cheapest failed 12% more often than balanced."*
+
+### v0.8 — Budget / Privacy / Latency Guardrails
+
+### v0.9 — Learned Routing Prep / Telemetry Analysis
 
 ### v1.0 — Workflow Orchestration
 

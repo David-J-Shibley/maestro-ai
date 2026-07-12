@@ -24,7 +24,7 @@ function textResult(data: unknown) {
 
 export function createMaestroMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "maestro-ai", version: "0.6.0" },
+    { name: "maestro-ai", version: "0.7.0" },
     { capabilities: { tools: {} } }
   );
 
