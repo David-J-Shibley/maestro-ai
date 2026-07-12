@@ -128,6 +128,18 @@ Every `maestro_route` / `maestro_ask` response includes:
 
 Every response also includes **`explanation`** — a human-readable decision card (`explanation.markdown`, `explanation.why[]`) describing why this model was chosen.
 
+After **`maestro_ask`**, when the evaluator runs, the card also includes a **validation outcome**:
+
+```
+Selected: local_fast
+Validation: failed schema check
+Escalated to: local_strong
+Final result: passed
+Why: local output was incomplete
+```
+
+Telemetry records include an `attemptLog` with per-attempt pass/fail and failed checks.
+
 ### Routing policy
 
 Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):

@@ -9,7 +9,10 @@ export type {
   ModelTier,
   QualityPreference,
   RiskLevel,
+  AttemptAction,
+  AttemptLogEntry,
   RoutedAttempt,
+  ValidationOutcome,
   RoutedLLMCallInput,
   RoutedLLMCallResult,
   RouterConfig,
@@ -67,12 +70,19 @@ export { probeAllTiers, probeEndpoint, probeTier } from "./provider/probe.js";
 
 export { routeTask } from "./router/model-router.js";
 export { buildRoutingReport } from "./routing/report.js";
-export type { RoutingReport } from "./routing/report.js";
+export type { RoutingReport, CallOutcome } from "./routing/report.js";
 export {
   buildDecisionExplanation,
   formatExplanationPlain,
 } from "./routing/explanation.js";
 export type { DecisionExplanation, HistoricalContext } from "./routing/explanation.js";
+export {
+  annotateAttemptActions,
+  buildAttemptLog,
+  buildValidationOutcome,
+  formatOutcomeMarkdown,
+  humanizeFailedChecks,
+} from "./routing/outcome.js";
 export {
   applyBudgetToTier,
   canEscalateWithinBudget,

@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { EvaluationCheck, EvaluationResult, EvaluatorContext } from "../types.js";
+import type {
+  EvaluationResult,
+  EvaluationCheck,
+  EvaluatorContext,
+} from "../types.js";
 import {
   extractCompletionFromRaw,
   hasMeaningfulContent,
@@ -48,35 +52,52 @@ export function evaluateResponse(
   if (toolCheck) checks.push(toolCheck);
 
   const pass = checks.every((c) => c.pass);
+  const signals = deriveEvaluationSignals(content, checks, pass);
+
+  return {
+    pass,
+    reason: signals.reason,
+    retryRecommended: signals.retryRecommended,
+    escalationRecommended: signals.escalationRecommended,
+    checks,
+  };
+}
+
+function deriveEvaluationSignals(
+  content: string,
+  checks: EvaluationCheck[],
+  pass: boolean
+): Pick<EvaluationResult, "reason" | "retryRecommended" | "escalationRecommended"> {
+  const nonEmpty = checks.find((c) => c.name === "non_empty");
+  const contentIntegrity = checks.find((c) => c.name === "content_integrity");
+  const refusal = checks.find((c) => c.name === "no_refusal");
+  const jsonCheck = checks.find((c) => c.name === "valid_json");
+  const toolCheck = checks.find((c) => c.name === "tool_calls_valid");
 
   const retryRecommended =
     !pass &&
-    refusal.pass &&
-    (!nonEmpty.pass ||
-      (contentIntegrity?.pass === false) ||
-      (jsonCheck !== null && !jsonCheck.pass));
+    (refusal?.pass ?? true) &&
+    (!nonEmpty?.pass ||
+      contentIntegrity?.pass === false ||
+      (jsonCheck !== undefined && !jsonCheck.pass));
 
   const escalationRecommended =
     !pass &&
-    (refusal.pass === false ||
-      !nonEmpty.pass ||
+    (refusal?.pass === false ||
+      !nonEmpty?.pass ||
       contentIntegrity?.pass === false ||
       (jsonCheck?.pass === false && hasMeaningfulContent(content)) ||
       isLowConfidenceOutput(content) ||
-      (toolCheck?.pass === false));
+      toolCheck?.pass === false ||
+      checks.some((c) => c.name === "tests_pass" && !c.pass) ||
+      checks.some((c) => c.name === "build_pass" && !c.pass));
 
   const failed = checks.filter((c) => !c.pass);
   const reason = pass
     ? "All checks passed"
     : failed.map((c) => c.reason ?? c.name).join("; ");
 
-  return {
-    pass,
-    reason,
-    retryRecommended,
-    escalationRecommended,
-    checks,
-  };
+  return { reason, retryRecommended, escalationRecommended };
 }
 
 export async function evaluateResponseAsync(
@@ -121,15 +142,15 @@ export async function evaluateResponseAsync(
   }
 
   const pass = checks.every((c) => c.pass);
-  const failed = checks.filter((c) => !c.pass);
+  const signals = deriveEvaluationSignals(content, checks, pass);
 
   return {
     ...base,
     pass,
     checks,
-    reason: pass
-      ? "All checks passed"
-      : failed.map((c) => c.reason ?? c.name).join("; "),
+    reason: signals.reason,
+    retryRecommended: signals.retryRecommended,
+    escalationRecommended: signals.escalationRecommended,
   };
 }
 

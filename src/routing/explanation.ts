@@ -1,6 +1,7 @@
-import type { ModelTier, RoutingDecision, TaskAnalysis, TaskType } from "../types.js";
+import type { ModelTier, RoutingDecision, TaskAnalysis, TaskType, ValidationOutcome } from "../types.js";
 import { nextTier } from "../types.js";
 import { isLocalTier } from "../types.js";
+import { formatOutcomeMarkdown } from "./outcome.js";
 
 export interface HistoricalContext {
   sampleSize: number;
@@ -34,6 +35,8 @@ export interface DecisionExplanation {
   historical?: HistoricalContext;
   policy_notes?: string[];
   budget_note?: string;
+  /** Present after maestro_ask / routedLLMCall when evaluator ran. */
+  outcome?: ValidationOutcome;
 }
 
 const TIER_LABELS: Record<ModelTier, string> = {
@@ -74,8 +77,9 @@ export function buildDecisionExplanation(input: {
   historical?: HistoricalContext | null;
   policyNotes?: string[];
   fallbackModel?: string;
+  outcome?: ValidationOutcome;
 }): DecisionExplanation {
-  const { routing, analysis, contextTokens, historical, policyNotes, fallbackModel } =
+  const { routing, analysis, contextTokens, historical, policyNotes, fallbackModel, outcome } =
     input;
 
   const why: string[] = [];
@@ -147,10 +151,11 @@ export function buildDecisionExplanation(input: {
     historical,
     fallback,
     budgetNote,
+    outcome,
   });
 
   return {
-    summary,
+    summary: outcome?.summary ?? summary,
     markdown,
     why,
     task: {
@@ -161,18 +166,19 @@ export function buildDecisionExplanation(input: {
       signals: analysis.signals.length ? analysis.signals : undefined,
     },
     selected: {
-      tier: routing.tier,
-      model: routing.model,
+      tier: outcome?.initial_tier ?? routing.tier,
+      model: outcome?.initial_model ?? routing.model,
       provider: routing.provider,
       endpoint_source: routing.endpointSource,
     },
     fallback,
-    cost_note: isLocalTier(routing.tier)
+    cost_note: isLocalTier(outcome?.initial_tier ?? routing.tier)
       ? "Local inference — no per-token cloud charge"
       : `Cloud tier (${routing.provider})`,
     historical: historical ?? undefined,
     policy_notes: policyNotes?.length ? policyNotes : undefined,
     budget_note: budgetNote,
+    outcome,
   };
 }
 
@@ -232,6 +238,7 @@ function formatMarkdown(input: {
   historical?: HistoricalContext | null;
   fallback?: { tier: ModelTier; model?: string };
   budgetNote?: string;
+  outcome?: ValidationOutcome;
 }): string {
   const lines = [
     "🎼 Maestro Decision",
@@ -249,7 +256,7 @@ function formatMarkdown(input: {
   lines.push(
     "",
     "**Selected**",
-    `- Model: \`${input.routing.model}\` (${TIER_LABELS[input.routing.tier]})`,
+    `- Model: \`${input.outcome?.initial_model ?? input.routing.model}\` (${TIER_LABELS[input.outcome?.initial_tier ?? input.routing.tier]})`,
     `- Provider: ${input.routing.provider}`,
   );
 
@@ -262,12 +269,16 @@ function formatMarkdown(input: {
     lines.push(`- ✓ ${w}`);
   }
 
-  if (input.fallback) {
+  if (input.fallback && !input.outcome?.escalated) {
     lines.push(
       "",
       "**Fallback** (if evaluation fails or endpoint down)",
       `- Tier: ${TIER_LABELS[input.fallback.tier]}${input.fallback.model ? ` (\`${input.fallback.model}\`)` : ""}`
     );
+  }
+
+  if (input.outcome) {
+    lines.push(formatOutcomeMarkdown(input.outcome));
   }
 
   if (input.budgetNote) {

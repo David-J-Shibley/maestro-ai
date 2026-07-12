@@ -217,6 +217,8 @@ export interface TelemetryRecord {
   evaluatorResult?: EvaluationResult;
   routingReason: string;
   attempts: number;
+  /** Per-attempt audit trail when evaluator-driven escalation runs. */
+  attemptLog?: AttemptLogEntry[];
   /** True only when the call actually fell back to a higher tier. */
   escalated?: boolean;
   sessionId?: string;
@@ -226,6 +228,8 @@ export interface TelemetryRecord {
 export interface RoutedLLMCallResult {
   response: LLMResponse;
   analysis: TaskAnalysis;
+  /** Tier/model chosen before any evaluator-driven escalation. */
+  initialRouting: RoutingDecision;
   routing: RoutingDecision;
   evaluation: EvaluationResult;
   telemetryId: string;
@@ -233,12 +237,46 @@ export interface RoutedLLMCallResult {
   attempts: RoutedAttempt[];
 }
 
+export type AttemptAction = "initial" | "retry" | "escalation" | "provider_recovery";
+
 export interface RoutedAttempt {
   tier: ModelTier;
   model: string;
   latencyMs?: number;
   error?: string;
   evaluation?: EvaluationResult;
+  action?: AttemptAction;
+}
+
+export interface AttemptLogEntry {
+  tier: ModelTier;
+  model: string;
+  action: AttemptAction;
+  latencyMs?: number;
+  pass: boolean;
+  failedChecks?: string[];
+  reason?: string;
+  error?: string;
+}
+
+export interface ValidationOutcome {
+  initial_tier: ModelTier;
+  initial_model: string;
+  final_tier: ModelTier;
+  final_model: string;
+  escalated: boolean;
+  final_pass: boolean;
+  summary: string;
+  why_escalated: string[];
+  attempt_trail: Array<{
+    tier: ModelTier;
+    model: string;
+    action: AttemptAction;
+    pass: boolean;
+    failed_checks?: string[];
+    reason?: string;
+    error?: string;
+  }>;
 }
 
 export const TIER_ORDER: ModelTier[] = [

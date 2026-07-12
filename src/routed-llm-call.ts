@@ -10,12 +10,14 @@ import { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-ev
 import { chatCompletion, ProviderError } from "./provider/openai-compatible.js";
 import { probeAllTiers, type TierProbeStatus } from "./provider/probe.js";
 import { routeTask } from "./router/model-router.js";
+import { annotateAttemptActions, buildAttemptLog } from "./routing/outcome.js";
 import { estimateCostUsd, logTelemetry } from "./telemetry/logger.js";
 import {
   canEscalateWithinBudget,
   resolveBudgetStatus,
 } from "./routing/budget.js";
 import type {
+  AttemptAction,
   EvaluatorContext,
   ModelTier,
   RoutedAttempt,
@@ -101,8 +103,10 @@ export async function routedLLMCall(
     });
   }
 
+  const initialRouting = { ...decision };
+
   if (overrides.dryRunRouting) {
-    return { ...dryRunResult(analysis, decision), probe };
+    return { ...dryRunResult(analysis, decision, initialRouting), probe };
   }
 
   const attempts: RoutedAttempt[] = [];
@@ -111,14 +115,22 @@ export async function routedLLMCall(
   let lastResponse = null as Awaited<ReturnType<typeof chatCompletion>> | null;
   let lastEvaluation = evaluateResponse("", options.evaluatorContext ?? {});
   let totalAttempts = 0;
+  let tierAttemptCount = 0;
+  const maxRetriesPerTier = config.routing.maxRetriesPerTier;
   const maxAttempts =
-    config.routing.enableEscalation ? 4 * (config.routing.maxRetriesPerTier + 1) : 1;
+    config.routing.enableEscalation ? 4 * (maxRetriesPerTier + 1) : 1;
 
   while (totalAttempts < maxAttempts) {
     const tierStatus = statuses.get(currentTier);
     const endpoint =
       tierStatus?.effective?.endpoint ?? getPrimaryEndpoint(config, currentTier);
-    const attempt: RoutedAttempt = { tier: currentTier, model: endpoint.model };
+    const action: AttemptAction =
+      totalAttempts === 0 ? "initial" : tierAttemptCount > 0 ? "retry" : "escalation";
+    const attempt: RoutedAttempt = {
+      tier: currentTier,
+      model: endpoint.model,
+      action,
+    };
 
     try {
       const response = await chatCompletion(endpoint, currentTier, {
@@ -132,6 +144,8 @@ export async function routedLLMCall(
       attempt.latencyMs = response.latencyMs;
       attempts.push(attempt);
       lastResponse = response;
+      tierAttemptCount++;
+      totalAttempts++;
 
       const evalContext: EvaluatorContext = {
         ...options.evaluatorContext,
@@ -148,24 +162,10 @@ export async function routedLLMCall(
 
       attempt.evaluation = evaluation;
       lastEvaluation = evaluation;
-      totalAttempts++;
 
       if (evaluation.pass) break;
 
-      const emptyOrCorrupt =
-        !evaluation.checks.find((c) => c.name === "non_empty")?.pass ||
-        evaluation.checks.find((c) => c.name === "content_integrity")?.pass === false;
-
-      if (emptyOrCorrupt && config.routing.enableEscalation) {
-        const next = nextTier(currentTier);
-        if (next && next !== currentTier && canEscalateWithinBudget(next, budget)) {
-          currentTier = next;
-          escalated = true;
-          continue;
-        }
-      }
-
-      if (evaluation.retryRecommended && totalAttempts <= config.routing.maxRetriesPerTier) {
+      if (evaluation.retryRecommended && tierAttemptCount <= maxRetriesPerTier) {
         continue;
       }
 
@@ -176,6 +176,7 @@ export async function routedLLMCall(
             break;
           }
           currentTier = next;
+          tierAttemptCount = 0;
           escalated = true;
           continue;
         }
@@ -186,6 +187,7 @@ export async function routedLLMCall(
       attempt.error = err instanceof Error ? err.message : String(err);
       attempt.latencyMs = 0;
       attempts.push(attempt);
+      tierAttemptCount++;
       totalAttempts++;
 
       const shouldEscalate =
@@ -204,6 +206,7 @@ export async function routedLLMCall(
             throw err;
           }
           currentTier = next;
+          tierAttemptCount = 0;
           escalated = true;
           continue;
         }
@@ -217,6 +220,9 @@ export async function routedLLMCall(
     throw new Error("No LLM response produced");
   }
 
+  const finalAttempts = annotateAttemptActions(attempts);
+  const attemptLog = buildAttemptLog(finalAttempts);
+
   const finalStatus = statuses.get(currentTier);
   const finalEndpoint =
     finalStatus?.effective?.endpoint ?? getPrimaryEndpoint(config, currentTier);
@@ -229,17 +235,18 @@ export async function routedLLMCall(
   const telemetryId = logTelemetry(config, {
     promptHash,
     taskAnalysis: analysis,
-    selectedTier: decision.tier,
-    selectedModel: decision.model,
-    fallbackTier: escalated ? currentTier : decision.fallbackTier ?? undefined,
+    selectedTier: initialRouting.tier,
+    selectedModel: initialRouting.model,
+    fallbackTier: escalated ? currentTier : initialRouting.fallbackTier ?? undefined,
     fallbackModel: escalated ? finalEndpoint.model : undefined,
     latencyMs: lastResponse.latencyMs,
     tokenUsage: lastResponse.usage,
     estimatedCostUsd: estimateCostUsd(currentTier, lastResponse.usage),
     success: lastEvaluation.pass,
     evaluatorResult: lastEvaluation,
-    routingReason: decision.reason,
+    routingReason: initialRouting.reason,
     attempts: totalAttempts,
+    attemptLog,
     escalated,
     sessionId,
     userFeedback: overrides?.userFeedback,
@@ -248,6 +255,7 @@ export async function routedLLMCall(
   return {
     response: lastResponse,
     analysis,
+    initialRouting,
     routing: {
       ...decision,
       tier: currentTier,
@@ -255,8 +263,8 @@ export async function routedLLMCall(
       baseUrl: finalEndpoint.baseUrl,
       provider: finalEndpoint.provider,
       reason: escalated
-        ? `${decision.reason} (escalated to ${currentTier})`
-        : decision.reason,
+        ? `${initialRouting.reason} (escalated to ${currentTier})`
+        : initialRouting.reason,
       fallbackReason:
         finalStatus?.effective?.fallbackReason ?? decision.fallbackReason,
       endpointSource: finalStatus?.effective?.source ?? decision.endpointSource,
@@ -264,7 +272,7 @@ export async function routedLLMCall(
     evaluation: lastEvaluation,
     telemetryId,
     escalated,
-    attempts,
+    attempts: finalAttempts,
     probe,
   };
 }
@@ -316,7 +324,8 @@ function mergeOverrides(
 
 function dryRunResult(
   analysis: TaskAnalysis,
-  routing: RoutingDecision
+  routing: RoutingDecision,
+  initialRouting: RoutingDecision
 ): RoutedLLMCallResult {
   return {
     response: {
@@ -326,6 +335,7 @@ function dryRunResult(
       latencyMs: 0,
     },
     analysis,
+    initialRouting,
     routing,
     evaluation: {
       pass: true,

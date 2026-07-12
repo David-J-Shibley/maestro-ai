@@ -47,11 +47,19 @@ describe("fallback and escalation", () => {
   });
 
   it("retries invalid JSON then escalates tier", async () => {
+    const config = loadConfigFromString(CONFIG_JSON.replace('"maxRetriesPerTier": 0', '"maxRetriesPerTier": 1'));
     mockFetchSequence([
       {
         ok: true,
         body: {
           choices: [{ message: { content: "not-json" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        },
+      },
+      {
+        ok: true,
+        body: {
+          choices: [{ message: { content: "still-not-json" } }],
           usage: { prompt_tokens: 10, completion_tokens: 5 },
         },
       },
@@ -69,13 +77,16 @@ describe("fallback and escalation", () => {
       {
         messages: [{ role: "user", content: "Extract data as JSON" }],
         responseSchema: { type: "object" },
+        modelTier: "local_fast",
       },
-      { config: makeConfig() }
+      { config },
     );
 
     expect(result.escalated).toBe(true);
     expect(result.evaluation.pass).toBe(true);
-    expect(result.attempts.length).toBeGreaterThan(1);
+    expect(result.attempts.length).toBe(3);
+    expect(result.attempts[0]?.tier).toBe("local_fast");
+    expect(result.attempts[2]?.tier).toBe("local_strong");
   });
 
   it("escalates on timeout", async () => {

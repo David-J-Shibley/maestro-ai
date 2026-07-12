@@ -121,7 +121,7 @@ export function computeTelemetryStats(
     .map((r) => ({
       timestamp: r.timestamp,
       reason: r.evaluatorResult?.reason ?? r.routingReason,
-      tier: r.selectedTier,
+      tier: r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier,
     }));
 
   return {

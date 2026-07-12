@@ -106,6 +106,15 @@ export async function handleAskTool(input: AskToolInput) {
     probe: result.probe,
     contextTokens: estimateContextTokens(messages),
     config,
+    callOutcome: input.dry_run
+      ? undefined
+      : {
+          escalated: result.escalated,
+          attempts: result.attempts,
+          evaluation: result.evaluation,
+          initialRouting: result.initialRouting,
+          maxRetriesPerTier: config.routing.maxRetriesPerTier,
+        },
   });
 
   if (input.dry_run) {

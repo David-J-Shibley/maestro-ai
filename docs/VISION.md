@@ -33,7 +33,7 @@ Agent (Cursor, Claude Code, your app)
 - Probe availability before route
 - Response evaluation loop
 
-### v0.5 — Policy Engine 🚧 (in progress)
+### v0.5 — Policy Engine ✅ (shipped)
 
 - User preferences (`max_tier`, `budget_usd`, `always_prefer_local`)
 - Declarative policy file (`~/.maestro-ai/policy.json`)
@@ -41,6 +41,19 @@ Agent (Cursor, Claude Code, your app)
 - Task-type → tier overrides
 - **Explain Your Decision** — human-readable routing card on every response
 - Historical success rates from telemetry in explanations
+
+### v0.6 — Evaluator-Driven Escalation ✅ (shipped)
+
+Maestro moves from *"I chose the right model"* to *"I verified the result and escalated when needed"*:
+
+```
+Evaluator → validation result → retry same tier → escalate next tier → explain escalation → log outcome
+```
+
+- Per-tier retry accounting (`maxRetriesPerTier`)
+- Validation outcome in every `maestro_ask` report
+- Killer decision card: Selected → Validation failed → Escalated to → Final result → Why
+- Per-attempt `attemptLog` in telemetry
 
 Example policy intent:
 

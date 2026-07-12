@@ -2,7 +2,17 @@ import type { ModelTier, RoutingDecision, RouterConfig, TaskAnalysis } from "../
 import type { ProbeSnapshot } from "../provider/probe.js";
 import { getPrimaryEndpoint } from "../config/tier-config.js";
 import { buildDecisionExplanation, type DecisionExplanation } from "./explanation.js";
+import { buildValidationOutcome } from "./outcome.js";
 import { getHistoricalSuccessRate } from "../telemetry/stats.js";
+import type { EvaluationResult, RoutedAttempt } from "../types.js";
+
+export interface CallOutcome {
+  escalated: boolean;
+  attempts: RoutedAttempt[];
+  evaluation: EvaluationResult;
+  initialRouting: RoutingDecision;
+  maxRetriesPerTier: number;
+}
 
 export interface RoutingReport {
   tier: ModelTier;
@@ -30,33 +40,48 @@ export function buildRoutingReport(input: {
   probe?: { unavailable: Set<ModelTier>; results: ProbeSnapshot[] };
   contextTokens?: number;
   config?: RouterConfig;
+  callOutcome?: CallOutcome;
 }): RoutingReport {
-  const { routing, analysis, probe, contextTokens, config } = input;
+  const { routing, analysis, probe, contextTokens, config, callOutcome } = input;
+
+  const explanationRouting = callOutcome?.initialRouting ?? routing;
 
   const historical =
     config?.telemetry?.enabled
       ? getHistoricalSuccessRate(
           config.telemetry.logPath,
           analysis.taskType,
-          routing.tier
+          explanationRouting.tier
         )
       : null;
 
   let fallbackModel: string | undefined;
-  if (routing.fallbackTier && config) {
+  if (explanationRouting.fallbackTier && config) {
     try {
-      fallbackModel = getPrimaryEndpoint(config, routing.fallbackTier).model;
+      fallbackModel = getPrimaryEndpoint(config, explanationRouting.fallbackTier).model;
     } catch {
       fallbackModel = undefined;
     }
   }
 
+  const outcome = callOutcome
+    ? buildValidationOutcome({
+        initialRouting: callOutcome.initialRouting,
+        finalRouting: routing,
+        attempts: callOutcome.attempts,
+        evaluation: callOutcome.evaluation,
+        escalated: callOutcome.escalated,
+        maxRetriesPerTier: callOutcome.maxRetriesPerTier,
+      })
+    : undefined;
+
   const explanation = buildDecisionExplanation({
-    routing,
+    routing: explanationRouting,
     analysis,
     contextTokens,
     historical,
     fallbackModel,
+    outcome,
   });
 
   return {
