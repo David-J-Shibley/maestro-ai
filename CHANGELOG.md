@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.1] - 2026-07-12
 
+### Added
+- CLI `--version` / `-v` flag and `maestro version` command (checked before other commands).
+
 ### Fixed
 - Duplicate mode lines in routing debug trace and decision explanations.
 - Contradictory summarization rule text when `cheapest` mode nudges to `local_fast`.

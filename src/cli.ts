@@ -9,6 +9,7 @@ import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
 import { isRoutingMode } from "./routing/modes.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 function parseArgs(argv: string[]): {
   command: string;
@@ -105,7 +106,19 @@ function readMessages(flags: Record<string, string | boolean>, positional: strin
 }
 
 async function main(): Promise<void> {
-  const { command, positional, flags } = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.includes("--version") || argv.includes("-v")) {
+    console.log(PACKAGE_VERSION);
+    return;
+  }
+
+  const { command, positional, flags } = parseArgs(argv);
+
+  if (command === "version") {
+    console.log(PACKAGE_VERSION);
+    return;
+  }
+
   const overrides = buildOverrides(flags);
   const json = flags.json === true;
 
@@ -296,6 +309,7 @@ Usage:
   maestro init [--profile <name>]     First-time setup (~/.maestro-ai, MCP config)
   maestro doctor                      Diagnose Ollama, LiteLLM, API keys
   maestro stats [--last N]            Telemetry summary (default 50)
+  maestro version                     Print package version
 
 Profiles (for init):
   default       Ollama + LiteLLM (full tier stack)
@@ -303,6 +317,7 @@ Profiles (for init):
   cloud-only    LiteLLM/cloud only — no Ollama required
 
 Flags:
+  --version, -v            Print package version and exit
   --model-tier <tier>      Force tier (local_fast|local_strong|hosted_oss|premium)
   --prefer-local           Prefer local tiers when possible
   --premium-only           Always use premium tier

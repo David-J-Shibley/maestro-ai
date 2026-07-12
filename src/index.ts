@@ -132,6 +132,8 @@ export {
 } from "./init/setup.js";
 export type { InitOptions, InitReport } from "./init/setup.js";
 
+export { PACKAGE_VERSION } from "./version.js";
+
 export { createMaestroMcpServer, createModelRouterMcpServer } from "./mcp/server.js";
 export {
   handleAskTool,

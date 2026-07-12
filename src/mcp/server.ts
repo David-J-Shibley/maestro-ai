@@ -16,6 +16,8 @@ import {
   handleStatsTool,
 } from "./tools.js";
 
+import { PACKAGE_VERSION } from "../version.js";
+
 function textResult(data: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -24,7 +26,7 @@ function textResult(data: unknown) {
 
 export function createMaestroMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "maestro-ai", version: "0.7.1" },
+    { name: "maestro-ai", version: PACKAGE_VERSION },
     { capabilities: { tools: {} } }
   );
 
