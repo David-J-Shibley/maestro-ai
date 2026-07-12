@@ -10,3 +10,4 @@ dist/
 
 # Local tool configs (user/machine-specific)
 .claude/
+.npmrc
