@@ -89,30 +89,18 @@ Aggregate telemetry into actionable routing insights before full ML routing:
 - `maestro analyze` / `maestro_analyze` + optional `insights` on stats
 - Opt-in `learnedRoutingHints` nudges tier selection from telemetry when confidence is high enough
 
-### v1.0 — Workflow Orchestration
+### v1.0 — Workflow Orchestration ✅
 
-Instead of `User → Claude`, enable:
+Maestro evolves from choosing a model to choosing an execution strategy:
 
 ```
-User
-  ↓
-Planner
-  ↓
-Task Decomposer
-  ↓
-Maestro
-     ├── Local Qwen
-     ├── Claude
-     ├── Gemini
-     ├── DeepSeek
-     └── GPT-5
-  ↓
-Evaluator
-  ↓
-Synthesizer
+Goal → Planner → Workflow DAG → Step-level routing → Validate → Synthesize → Report
 ```
 
-Maestro stops choosing *a* model and starts **conducting an orchestra** — fan-out, merge, retry, synthesize.
+- Built-in patterns: single-shot, plan-execute-validate, parallel-synthesis, critique-revise, implement-test-fix, extract-normalize-validate
+- `runWorkflow()` API and CLI `--workflow` / `--dry-run-workflow`
+- Per-step routing, parallel execution, dependency context, failure recovery
+- Workflow execution reports and workflow telemetry records
 
 ### v2.0 — Self-Learning
 

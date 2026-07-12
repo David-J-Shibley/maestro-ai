@@ -197,6 +197,38 @@ Opt-in hints in `~/.maestro-ai/config.json`:
 
 When enabled, the router may nudge tier selection when telemetry shows a meaningfully better tier for the task type (medium+ confidence). Decision cards show telemetry recommendations even when hints are off.
 
+### Workflow orchestration (v1.0+)
+
+Maestro chooses an **execution strategy**, not just a model:
+
+| Pattern | Use case |
+|---------|----------|
+| `auto` | Default — planner picks single-shot or multi-step |
+| `critique` | Draft → critique → revise (writing, docs) |
+| `implement-test-fix` | Code → tests → build validation → fix |
+| `parallel-synthesis` | Parallel workers → merge (compare, research) |
+| `plan-execute-validate` | Plan → implement → validate (complex tasks) |
+| `extract` | Extract → normalize → validate JSON |
+
+```bash
+maestro ask "build auth middleware" --workflow implement-test-fix --debug
+maestro ask "compare these approaches" --workflow parallel-synthesis
+maestro ask "review this RFC" --workflow critique --dry-run-workflow
+```
+
+Programmatic API:
+
+```ts
+import { runWorkflow, dryRunWorkflow } from "maestro-ai";
+
+const result = await runWorkflow({
+  messages: [{ role: "user", content: "Implement caching layer" }],
+  workflow: "auto",
+  mode: "balanced",
+});
+console.log(result.report.markdown);
+```
+
 ### Routing policy
 
 Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):

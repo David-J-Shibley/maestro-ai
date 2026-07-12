@@ -116,6 +116,23 @@ export type { BudgetStatus } from "./routing/budget.js";
 export { dryRunRoute, routedLLMCall } from "./routed-llm-call.js";
 export type { RoutedLLMCallOptions, DryRunResult } from "./routed-llm-call.js";
 
+export { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
+export type { RunWorkflowOptions } from "./workflow/run-workflow.js";
+export type {
+  RunWorkflowInput,
+  RunWorkflowResult,
+  DryRunWorkflowResult,
+  WorkflowPlan,
+  WorkflowStepPlan,
+  WorkflowPatternId,
+  WorkflowRequest,
+  WorkflowExecutionReport,
+  WorkflowTelemetryRecord,
+} from "./workflow/types.js";
+export { planWorkflow, selectWorkflowPattern } from "./workflow/planner.js";
+export { formatExecutionReport } from "./workflow/report.js";
+export { executionLevels } from "./workflow/dag.js";
+
 export { estimateCostUsd, logTelemetry, recordUserFeedback } from "./telemetry/logger.js";
 export type { FeedbackRecord } from "./telemetry/logger.js";
 export {

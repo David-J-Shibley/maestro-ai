@@ -106,6 +106,19 @@ export interface RouterOverrides {
   premiumOnly?: boolean;
   debug?: boolean;
   dryRunRouting?: boolean;
+  /** Workflow orchestration pattern (v1.0+) */
+  workflow?:
+    | "auto"
+    | "single-shot"
+    | "plan-execute-validate"
+    | "parallel-synthesis"
+    | "critique-revise"
+    | "implement-test-fix"
+    | "extract-normalize-validate"
+    | "critique"
+    | "extract"
+    | "single";
+  dryRunWorkflow?: boolean;
   userFeedback?: string;
   session?: SessionPolicy;
 }

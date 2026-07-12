@@ -31,7 +31,9 @@ export function loadAllTelemetryRecords(logPath: string): TelemetryRecord[] {
   const records: TelemetryRecord[] = [];
   for (const line of lines) {
     try {
-      records.push(JSON.parse(line) as TelemetryRecord);
+      const parsed = JSON.parse(line) as { recordType?: string };
+      if (parsed.recordType === "workflow") continue;
+      records.push(parsed as TelemetryRecord);
     } catch {
       // skip corrupt lines
     }

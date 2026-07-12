@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-07-12
+
+### Added
+- **Workflow orchestration engine** (`src/workflow/`) — plan, execute, validate, and synthesize multi-step objectives.
+- Built-in workflow patterns: single-shot, plan-execute-validate, parallel-synthesis, critique-revise, implement-test-fix, extract-normalize-validate.
+- **`runWorkflow()` / `dryRunWorkflow()`** public API with step-level routing via existing `routedLLMCall`.
+- **Execution reports** — human-readable Maestro Execution Report per workflow.
+- **Workflow telemetry** — `recordType: "workflow"` JSONL records for pattern/step analysis.
+- CLI: `--workflow <pattern>`, `--dry-run-workflow` on `maestro ask` / `maestro call`.
+- Tests: `tests/workflow-*.test.ts`.
+
+### Changed
+- Single-shot routing remains default when workflow orchestration is not needed.
+- Telemetry stats skip workflow records when aggregating single-call metrics.
+
+[1.0.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.0.0
+
 ## [0.9.0] - 2026-07-12
 
 ### Added

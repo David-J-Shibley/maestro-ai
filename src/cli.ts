@@ -6,6 +6,8 @@ import { buildRoutingReport } from "./routing/report.js";
 import { loadConfig } from "./config/load-config.js";
 import { computeTelemetryStats, formatStatsReport, loadAllTelemetryRecords, loadTelemetryRecords } from "./telemetry/stats.js";
 import { computeRoutingInsights, formatInsightsReport } from "./telemetry/analysis.js";
+import { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
+import type { WorkflowRequest } from "./workflow/types.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
@@ -79,9 +81,30 @@ function buildOverrides(flags: Record<string, string | boolean>): RouterOverride
     preferLocal: flags["prefer-local"] === true || flags["prefer-local"] === "true",
     premiumOnly: flags["premium-only"] === true,
     dryRunRouting: flags["dry-run-routing"] === true,
+    dryRunWorkflow: flags["dry-run-workflow"] === true,
+    workflow: parseWorkflowFlag(flags.workflow),
     debug: flags.debug === true,
     session,
   };
+}
+
+function parseWorkflowFlag(value: string | boolean | undefined): WorkflowRequest | undefined {
+  if (typeof value !== "string") return undefined;
+  const allowed = [
+    "auto",
+    "single-shot",
+    "plan-execute-validate",
+    "parallel-synthesis",
+    "critique-revise",
+    "implement-test-fix",
+    "extract-normalize-validate",
+    "critique",
+    "implement-test-fix",
+    "parallel-synthesis",
+    "extract",
+    "single",
+  ];
+  return allowed.includes(value) ? (value as WorkflowRequest) : undefined;
 }
 
 function readMessages(flags: Record<string, string | boolean>, positional: string[]): ChatMessage[] {
@@ -169,6 +192,52 @@ async function main(): Promise<void> {
 
     if (command === "call" || command === "ask") {
       const messages = readMessages(flags, positional);
+      const configPath = typeof flags.config === "string" ? flags.config : undefined;
+
+      if (overrides.dryRunWorkflow || overrides.workflow) {
+        const config = loadConfig(configPath);
+        if (overrides.dryRunWorkflow) {
+          const dry = await dryRunWorkflow(
+            {
+              messages,
+              responseSchema: typeof flags.schema === "string" ? JSON.parse(flags.schema) : undefined,
+              taskHints: parseTaskHints(flags),
+              overrides,
+              workflow: overrides.workflow ?? "auto",
+            },
+            { configPath }
+          );
+          if (json) {
+            console.log(JSON.stringify(dry, null, 2));
+          } else {
+            console.log(dry.report);
+          }
+          return;
+        }
+
+        const result = await runWorkflow(
+          {
+            messages,
+            responseSchema: typeof flags.schema === "string" ? JSON.parse(flags.schema) : undefined,
+            taskHints: parseTaskHints(flags),
+            overrides,
+            workflow: overrides.workflow ?? "auto",
+          },
+          { configPath }
+        );
+
+        if (json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          if (overrides.debug) {
+            console.log(result.report.markdown);
+            console.log("\n---\n");
+          }
+          console.log(result.finalOutput);
+        }
+        return;
+      }
+
       const result = await routedLLMCall(
         {
           messages,
@@ -374,6 +443,8 @@ Flags:
   --messages <json>        Inline messages JSON
   --task-type <type>       Task hint (code_edit, summarization, ...)
   --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
+  --workflow <pattern>     Workflow orchestration (auto|critique|implement-test-fix|parallel-synthesis|...)
+  --dry-run-workflow       Preview workflow plan without executing
   --quality <fast|balanced|best>
   --risk <low|medium|high>
   --schema <json>          Response JSON schema object
