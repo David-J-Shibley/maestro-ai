@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-12
+
+### Fixed
+- Telemetry stats no longer conflate a *configured* fallback tier with an *actual* escalation. Previously, any call with a fallback tier configured (e.g. `local_strong` with `hosted_oss` fallback) was mis-counted as an escalation and attributed to the fallback tier/model — inflating `escalationRate` and skewing `tierDistribution`/`modelDistribution`. Stats now use an explicit `escalated` flag recorded per call, so each call is attributed to the tier/model that actually served it.
+
+### Changed
+- `TelemetryRecord` gained an `escalated` boolean field (additive; legacy records treated as non-escalated).
+- `*.tgz` is now gitignored.
+
+[0.4.1]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.4.1
+
 ## [0.4.0] - 2026-07-11
 
 ### Added
