@@ -238,6 +238,7 @@ export async function routedLLMCall(
     evaluatorResult: lastEvaluation,
     routingReason: decision.reason,
     attempts: totalAttempts,
+    escalated,
     sessionId,
     userFeedback: overrides?.userFeedback,
   });

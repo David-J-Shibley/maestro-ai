@@ -66,11 +66,16 @@ export function computeTelemetryStats(
   let costSum = 0;
 
   for (const r of records) {
-    const tier = r.fallbackTier ?? r.selectedTier;
+    // Attribute to the tier/model that actually served the call: the fallback
+    // when it escalated, otherwise the originally selected tier/model. Do NOT
+    // use fallbackTier's mere presence — it is set whenever a fallback is
+    // configured, even if the call succeeded on the primary.
+    const tier = r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier;
+    const model = r.escalated && r.fallbackModel ? r.fallbackModel : r.selectedModel;
     tierDistribution[tier] = (tierDistribution[tier] ?? 0) + 1;
-    modelDistribution[r.selectedModel] = (modelDistribution[r.selectedModel] ?? 0) + 1;
+    modelDistribution[model] = (modelDistribution[model] ?? 0) + 1;
     if (r.success) successes++;
-    if (r.fallbackTier && r.fallbackTier !== r.selectedTier) escalations++;
+    if (r.escalated) escalations++;
     latencySum += r.latencyMs;
     costSum += r.estimatedCostUsd ?? 0;
   }

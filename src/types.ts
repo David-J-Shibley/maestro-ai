@@ -196,6 +196,8 @@ export interface TelemetryRecord {
   evaluatorResult?: EvaluationResult;
   routingReason: string;
   attempts: number;
+  /** True only when the call actually fell back to a higher tier. */
+  escalated?: boolean;
   sessionId?: string;
   userFeedback?: string;
 }
