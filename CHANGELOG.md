@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-07-12
+
+### Fixed
+- Duplicate mode lines in routing debug trace and decision explanations.
+- Contradictory summarization rule text when `cheapest` mode nudges to `local_fast`.
+
+[0.7.1]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.7.1
+
 ## [0.7.0] - 2026-07-12
 
 ### Added

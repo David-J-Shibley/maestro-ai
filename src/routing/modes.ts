@@ -96,7 +96,7 @@ export function resolveModeConstraints(mode: RoutingMode): ModeConstraints {
         maxTier: "local_strong",
         preferLocal: true,
         tierPreference: "balanced",
-        notes: ["Mode local-only: cloud tiers disabled"],
+        notes: [],
       };
 
     case "cheapest":
@@ -105,7 +105,7 @@ export function resolveModeConstraints(mode: RoutingMode): ModeConstraints {
         maxTier: "local_strong",
         preferLocal: true,
         tierPreference: "lowest",
-        notes: ["Mode cheapest: minimizing cost — local tiers preferred"],
+        notes: [],
       };
 
     case "fastest":
@@ -114,7 +114,7 @@ export function resolveModeConstraints(mode: RoutingMode): ModeConstraints {
         preferLocal: true,
         tierPreference: "lowest",
         maxRetriesPerTier: 0,
-        notes: ["Mode fastest: favoring low-latency local_fast, no same-tier retries"],
+        notes: [],
       };
 
     case "best-quality":
@@ -124,7 +124,7 @@ export function resolveModeConstraints(mode: RoutingMode): ModeConstraints {
         minTier: "hosted_oss",
         preferLocal: false,
         tierPreference: "highest",
-        notes: ["Mode best-quality: prioritizing output quality over cost"],
+        notes: [],
       };
 
     case "private":
@@ -134,7 +134,7 @@ export function resolveModeConstraints(mode: RoutingMode): ModeConstraints {
         preferLocal: true,
         enforcePrivacyPolicy: true,
         tierPreference: "lowest",
-        notes: ["Mode private: localhost only, privacy policy enforced"],
+        notes: [],
       };
 
     default:
@@ -189,13 +189,13 @@ export function applyModeToTier(
   analysis: TaskAnalysis,
   constraints: ModeConstraints
 ): { tier: ModelTier; notes: string[] } {
-  const notes: string[] = [...constraints.notes];
+  const notes: string[] = [];
   let adjusted = tier;
 
   if (constraints.maxTier) {
     const capped = capTier(adjusted, constraints.maxTier);
     if (capped !== adjusted) {
-      notes.push(`Mode ${constraints.mode}: capped ${adjusted} → ${capped}`);
+      notes.push(`Capped ${adjusted} → ${capped} (${constraints.mode} max tier)`);
       adjusted = capped;
     }
   }
@@ -203,7 +203,7 @@ export function applyModeToTier(
   if (constraints.minTier && requiresHigherTier(analysis, constraints.minTier)) {
     const floored = floorTier(adjusted, constraints.minTier);
     if (floored !== adjusted) {
-      notes.push(`Mode ${constraints.mode}: raised ${adjusted} → ${floored} for task requirements`);
+      notes.push(`Raised ${adjusted} → ${floored} for task requirements`);
       adjusted = floored;
     }
   }
@@ -211,13 +211,13 @@ export function applyModeToTier(
   if (constraints.tierPreference === "lowest") {
     const lowered = nudgeTierDown(adjusted, analysis, constraints.maxTier);
     if (lowered !== adjusted) {
-      notes.push(`Mode ${constraints.mode}: nudged ${adjusted} → ${lowered} (lowest viable)`);
+      notes.push(`Nudged ${adjusted} → ${lowered} (lowest viable tier)`);
       adjusted = lowered;
     }
   } else if (constraints.tierPreference === "highest") {
     const raised = nudgeTierUp(adjusted, analysis, constraints.maxTier);
     if (raised !== adjusted) {
-      notes.push(`Mode ${constraints.mode}: nudged ${adjusted} → ${raised} (highest allowed)`);
+      notes.push(`Nudged ${adjusted} → ${raised} (highest allowed tier)`);
       adjusted = raised;
     }
   }

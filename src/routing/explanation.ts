@@ -88,11 +88,13 @@ export function buildDecisionExplanation(input: {
 
   const why: string[] = [];
 
+  const selectedTier = outcome?.initial_tier ?? routing.tier;
+
   for (const line of routing.debug ?? []) {
     if (line.startsWith("rule:")) {
-      why.push(humanizeRule(line.slice(5).trim()));
-    } else if (line.startsWith("mode:") || line.startsWith("Mode ")) {
-      why.push(line.replace(/^mode:\s*/i, "Mode: "));
+      why.push(humanizeRule(line.slice(5).trim(), selectedTier));
+    } else if (line.startsWith("mode:")) {
+      why.push(line.slice(5).trim());
     } else if (line.startsWith("policy:") || line.startsWith("Policy:")) {
       why.push(line.replace(/^policy:\s*/i, "Policy: "));
     } else if (line.includes("budget")) {
@@ -106,12 +108,12 @@ export function buildDecisionExplanation(input: {
     }
   }
 
-  why.push(...tierFitReasons(analysis, routing.tier));
+  why.push(...tierFitReasons(analysis, selectedTier));
 
-  if (isLocalTier(routing.tier)) {
+  if (isLocalTier(selectedTier)) {
     why.push("Runs on localhost (Ollama) — no cloud API cost for inference");
   } else {
-    const savings = estimateSavingsVsPremium(routing.tier);
+    const savings = estimateSavingsVsPremium(selectedTier);
     if (savings > 0) {
       why.push(`Estimated ~${savings}% lower cost than premium tier`);
     }
@@ -152,11 +154,13 @@ export function buildDecisionExplanation(input: {
     ? `${modeLabel} · ${taskLabel} → ${routing.model} (${TIER_LABELS[routing.tier]})`
     : `${taskLabel} → ${routing.model} (${TIER_LABELS[routing.tier]})`;
 
+  const dedupedWhy = [...new Set(why)];
+
   const markdown = formatMarkdown({
     analysis,
     routing,
     contextTokens,
-    why,
+    why: dedupedWhy,
     historical,
     fallback,
     budgetNote,
@@ -167,7 +171,7 @@ export function buildDecisionExplanation(input: {
   return {
     summary: outcome?.summary ?? summary,
     markdown,
-    why,
+    why: dedupedWhy,
     task: {
       type: analysis.taskType,
       difficulty: analysis.difficulty,
@@ -193,8 +197,13 @@ export function buildDecisionExplanation(input: {
   };
 }
 
-function humanizeRule(rule: string): string {
-  if (rule.includes("summarization")) return "Summarization and rewriting tasks suit local/strong models";
+function humanizeRule(rule: string, tier?: ModelTier): string {
+  if (rule.includes("summarization")) {
+    if (tier === "local_fast") {
+      return "Easy summarization fits the fast local tier";
+    }
+    return "Summarization and rewriting tasks suit local/strong models";
+  }
   if (rule.includes("medium difficulty coding")) return "Medium coding tasks route to hosted OSS coder models";
   if (rule.includes("hard/high-risk")) return "Hard or high-risk work needs the premium tier";
   if (rule.includes("simple HTML")) return "Simple UI/HTML demos are handled by the fast local tier";

@@ -9,6 +9,7 @@ import {
   resolveModeConstraints,
 } from "../src/routing/modes.js";
 import { computeTelemetryStats } from "../src/telemetry/stats.js";
+import { buildDecisionExplanation } from "../src/routing/explanation.js";
 import type { TelemetryRecord } from "../src/types.js";
 
 const CONFIG_JSON = `{
@@ -96,6 +97,25 @@ describe("routing modes", () => {
     const constraints = resolveModeConstraints("local-only");
     expect(canEscalateWithinMode("hosted_oss", constraints)).toBe(false);
     expect(canEscalateWithinMode("local_strong", constraints)).toBe(true);
+  });
+
+  it("cheapest explanation has no duplicate mode bullets", () => {
+    const analysis = analyzeTask({
+      userPrompt: "Summarize this paragraph in two sentences.",
+    });
+    const decision = routeTask({
+      analysis,
+      config: config(),
+      overrides: { mode: "cheapest" },
+      userPrompt: "Summarize this paragraph in two sentences.",
+    });
+
+    const explanation = buildDecisionExplanation({ routing: decision, analysis });
+    const modeBullets = explanation.why.filter((w) =>
+      w.toLowerCase().includes("minimize cost")
+    );
+    expect(modeBullets.length).toBeLessThanOrEqual(1);
+    expect(explanation.why.some((w) => w.includes("fast local tier"))).toBe(true);
   });
 
   it("tracks mode success rates in telemetry stats", () => {

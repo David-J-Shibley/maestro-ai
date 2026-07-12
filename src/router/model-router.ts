@@ -17,6 +17,7 @@ import {
 import { applyRoutingPolicy } from "../config/policy.js";
 import {
   applyModeToTier,
+  getModeProfile,
   resolveActiveMode,
   resolveModeConstraints,
   type ModeConstraints,
@@ -48,8 +49,8 @@ export function routeTask(input: RouteInput): RoutingDecision {
     modeConstraints.preferLocal ??
     config.routing.preferLocal;
 
-  if (modeConstraints.notes.length) {
-    for (const note of modeConstraints.notes) pushDebug(debug, `mode: ${note}`);
+  if (activeMode !== "balanced") {
+    pushDebug(debug, `mode: ${getModeProfile(activeMode).description}`);
   }
 
   if (overrides?.premiumOnly) {
@@ -155,8 +156,7 @@ export function routeTask(input: RouteInput): RoutingDecision {
   const modeAdjusted = applyModeToTier(tier, analysis, modeConstraints);
   tier = modeAdjusted.tier;
   for (const note of modeAdjusted.notes) {
-    if (!note.startsWith("Mode ")) pushDebug(debug, `mode: ${note}`);
-    else pushDebug(debug, note);
+    pushDebug(debug, `mode: ${note}`);
   }
 
   const budget = resolveBudgetStatus(session, config);
