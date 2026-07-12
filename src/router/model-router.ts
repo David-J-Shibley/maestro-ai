@@ -22,7 +22,12 @@ import {
   resolveModeConstraints,
   type ModeConstraints,
 } from "../routing/modes.js";
+import { tierMeetsTask } from "../routing/tier-fit.js";
 import { applyGuardrails } from "../routing/guardrails.js";
+import {
+  shouldApplyLearnedHint,
+  suggestTierFromTelemetry,
+} from "../routing/learned.js";
 
 export interface RouteInput {
   analysis: TaskAnalysis;
@@ -179,6 +184,30 @@ export function routeTask(input: RouteInput): RoutingDecision {
   tier = guardrails.tier;
   for (const g of guardrails.results) {
     pushDebug(debug, `guardrail:${g.kind}:${g.action}: ${g.message}`);
+  }
+
+  if (config.routing.learnedRoutingHints && config.telemetry.enabled) {
+    const suggestion = suggestTierFromTelemetry(
+      config.telemetry.logPath,
+      analysis.taskType,
+      { minSamples: config.routing.learnedMinSamples ?? 5 }
+    );
+    if (
+      suggestion &&
+      shouldApplyLearnedHint(tier, suggestion, "medium") &&
+      tierMeetsTask(analysis, suggestion.tier)
+    ) {
+      pushDebug(
+        debug,
+        `learned: telemetry suggests ${suggestion.tier} — ${suggestion.reason}`
+      );
+      tier = suggestion.tier;
+    } else if (suggestion) {
+      pushDebug(
+        debug,
+        `learned: hint available for ${analysis.taskType} → ${suggestion.tier} (${suggestion.confidence} confidence, not applied)`
+      );
+    }
   }
 
   for (const r of reasons) pushDebug(debug, `rule: ${r}`);

@@ -4,6 +4,7 @@ import { isLocalTier } from "../types.js";
 import { formatOutcomeMarkdown } from "./outcome.js";
 import { formatGuardrailsMarkdown } from "./guardrails.js";
 import { getModeProfile } from "./modes.js";
+import type { TierRecommendation } from "../telemetry/analysis.js";
 import type { GuardrailResult, RoutingMode } from "../types.js";
 
 export interface HistoricalContext {
@@ -84,8 +85,9 @@ export function buildDecisionExplanation(input: {
   policyNotes?: string[];
   fallbackModel?: string;
   outcome?: ValidationOutcome;
+  telemetryRecommendation?: TierRecommendation | null;
 }): DecisionExplanation {
-  const { routing, analysis, contextTokens, historical, policyNotes, fallbackModel, outcome } =
+  const { routing, analysis, contextTokens, historical, policyNotes, fallbackModel, outcome, telemetryRecommendation } =
     input;
 
   const why: string[] = [];
@@ -97,6 +99,8 @@ export function buildDecisionExplanation(input: {
       why.push(humanizeRule(line.slice(5).trim(), selectedTier));
     } else if (line.startsWith("mode:")) {
       why.push(line.slice(5).trim());
+    } else if (line.startsWith("learned:")) {
+      why.push(`Telemetry: ${line.slice(8).trim()}`);
     } else if (line.startsWith("guardrail:")) {
       const parts = line.slice("guardrail:".length).split(":");
       const kind = parts[0] ?? "guardrail";
@@ -135,6 +139,17 @@ export function buildDecisionExplanation(input: {
     why.push(
       `Historical success rate: ${(historical.successRate * 100).toFixed(0)}% (${historical.sampleSize} similar tasks)`
     );
+  }
+
+  if (
+    telemetryRecommendation &&
+    telemetryRecommendation.recommendedTier !== selectedTier
+  ) {
+    why.push(
+      `Telemetry recommends ${telemetryRecommendation.recommendedTier} for ${analysis.taskType} — ${telemetryRecommendation.reason}`
+    );
+  } else if (telemetryRecommendation) {
+    why.push(`Telemetry agrees: ${telemetryRecommendation.reason}`);
   }
 
   if (policyNotes?.length) {

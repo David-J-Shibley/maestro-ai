@@ -1,6 +1,6 @@
 {
   "name": "maestro-ai",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Maestro AI — dynamic model delegation for agentic coding harnesses",
   "type": "module",
   "main": "./dist/index.js",

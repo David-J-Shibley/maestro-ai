@@ -55,7 +55,9 @@
     "enableEscalation": true,
     "preferLocal": true,
     "longContextTokenThreshold": 32000,
-    "probeAvailability": true
+    "probeAvailability": true,
+    "learnedRoutingHints": false,
+    "learnedMinSamples": 5
   },
   "telemetry": {
     "enabled": true,

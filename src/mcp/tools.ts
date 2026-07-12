@@ -3,10 +3,13 @@ import { dryRunRoute, routedLLMCall } from "../routed-llm-call.js";
 import { probeAllTiers } from "../provider/probe.js";
 import { buildRoutingReport, enrichAskResponse } from "../routing/report.js";
 import { runDoctor } from "../doctor/health.js";
-import { computeTelemetryStats, loadTelemetryRecords } from "../telemetry/stats.js";
+import { computeTelemetryStats, loadAllTelemetryRecords, loadTelemetryRecords } from "../telemetry/stats.js";
+import { computeRoutingInsights, formatInsightsReport } from "../telemetry/analysis.js";
+import { learnedRoutingAvailable } from "../routing/learned.js";
 import { recordUserFeedback } from "../telemetry/logger.js";
 import type { ChatMessage, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
 import type {
+  AnalyzeToolInput,
   AskToolInput,
   FeedbackToolInput,
   ProbeToolInput,
@@ -166,12 +169,51 @@ export async function handleStatsTool(input: StatsToolInput) {
   }
 
   const stats = computeTelemetryStats(records);
-  return {
+  const result: Record<string, unknown> = {
     limit,
     session_id: input.session_id ?? null,
     log_path: config.telemetry.logPath,
     stats,
     report: formatStatsInline(stats, limit),
+  };
+
+  if (input.insights) {
+    const minSamples = config.routing.learnedMinSamples ?? 5;
+    const insights = computeRoutingInsights(records, { minSamples });
+    result.insights = insights;
+    result.learned_hints_available = learnedRoutingAvailable(config.telemetry.logPath, {
+      minSamples,
+    });
+    result.insights_report = formatInsightsReport(insights);
+  }
+
+  return result;
+}
+
+export async function handleAnalyzeTool(input: AnalyzeToolInput) {
+  const config = loadConfig(input.config_path);
+  const minSamples = input.min_samples ?? config.routing.learnedMinSamples ?? 5;
+  const useAll = input.all !== false && input.last === undefined;
+
+  let records = useAll
+    ? loadAllTelemetryRecords(config.telemetry.logPath)
+    : loadTelemetryRecords(config.telemetry.logPath, input.last ?? 50);
+
+  if (input.session_id) {
+    records = records.filter((r) => r.sessionId === input.session_id);
+  }
+
+  const insights = computeRoutingInsights(records, { minSamples });
+
+  return {
+    log_path: config.telemetry.logPath,
+    session_id: input.session_id ?? null,
+    records_analyzed: records.length,
+    min_samples: minSamples,
+    insights,
+    report: formatInsightsReport(insights),
+    learned_hints_available: learnedRoutingAvailable(config.telemetry.logPath, { minSamples }),
+    learned_routing_hints_enabled: config.routing.learnedRoutingHints ?? false,
   };
 }
 

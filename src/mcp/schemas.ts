@@ -85,7 +85,22 @@ export const probeToolInputSchema = z.object({
 export const statsToolInputSchema = z.object({
   last: z.number().optional().describe("Number of recent telemetry records to analyze (default 50)."),
   session_id: z.string().optional().describe("Filter stats to a single session."),
+  insights: z
+    .boolean()
+    .optional()
+    .describe("Include routing insights and learned-routing readiness in stats output."),
   config_path: z.string().optional().describe("Path to Maestro AI config JSON."),
+});
+
+export const analyzeToolInputSchema = statsToolInputSchema.extend({
+  min_samples: z
+    .number()
+    .optional()
+    .describe("Minimum samples per task/tier cell for recommendations (default 5)."),
+  all: z
+    .boolean()
+    .optional()
+    .describe("Analyze all telemetry records (default true for analyze; stats uses last N)."),
 });
 
 export const feedbackToolInputSchema = z.object({
@@ -102,4 +117,5 @@ export type RouteToolInput = z.infer<typeof routeToolInputSchema>;
 export type AskToolInput = z.infer<typeof askToolInputSchema>;
 export type ProbeToolInput = z.infer<typeof probeToolInputSchema>;
 export type StatsToolInput = z.infer<typeof statsToolInputSchema>;
+export type AnalyzeToolInput = z.infer<typeof analyzeToolInputSchema>;
 export type FeedbackToolInput = z.infer<typeof feedbackToolInputSchema>;

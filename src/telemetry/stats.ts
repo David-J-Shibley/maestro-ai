@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { expandPath } from "../config/load-config.js";
 import type { ModelTier, TelemetryRecord, TaskType } from "../types.js";
+import { servedTier, servedModel } from "./records.js";
 
 export interface TelemetryStats {
   total: number;
@@ -63,9 +64,7 @@ export function getHistoricalSuccessRate(
   const records = loadAllTelemetryRecords(logPath).slice(-limit);
   const matching = records.filter((r) => {
     if (r.taskAnalysis.taskType !== taskType) return false;
-    const servedTier =
-      r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier;
-    return servedTier === tier;
+    return servedTier(r) === tier;
   });
 
   if (matching.length < minSamples) return null;
@@ -111,8 +110,8 @@ export function computeTelemetryStats(
     // when it escalated, otherwise the originally selected tier/model. Do NOT
     // use fallbackTier's mere presence — it is set whenever a fallback is
     // configured, even if the call succeeded on the primary.
-    const tier = r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier;
-    const model = r.escalated && r.fallbackModel ? r.fallbackModel : r.selectedModel;
+    const tier = servedTier(r);
+    const model = servedModel(r);
     tierDistribution[tier] = (tierDistribution[tier] ?? 0) + 1;
     modelDistribution[model] = (modelDistribution[model] ?? 0) + 1;
     const modeKey = r.mode ?? "balanced";
@@ -141,7 +140,7 @@ export function computeTelemetryStats(
     .map((r) => ({
       timestamp: r.timestamp,
       reason: r.evaluatorResult?.reason ?? r.routingReason,
-      tier: r.escalated && r.fallbackTier ? r.fallbackTier : r.selectedTier,
+      tier: servedTier(r),
     }));
 
   return {

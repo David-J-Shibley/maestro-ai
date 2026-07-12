@@ -80,7 +80,14 @@ Unified guardrail layer after routing modes:
 
 Configurable in `~/.maestro-ai/policy.json` under `guardrails`. Decisions show a **Guardrails** section in explanations.
 
-### v0.9 — Learned Routing Prep / Telemetry Analysis
+### v0.9 — Learned Routing Prep / Telemetry Analysis ✅
+
+Aggregate telemetry into actionable routing insights before full ML routing:
+
+- Per-task × per-tier success/escalation/latency cells
+- Recommendations and human-readable findings (e.g. mode vs balanced deltas)
+- `maestro analyze` / `maestro_analyze` + optional `insights` on stats
+- Opt-in `learnedRoutingHints` nudges tier selection from telemetry when confidence is high enough
 
 ### v1.0 — Workflow Orchestration
 

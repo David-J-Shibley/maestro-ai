@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { dryRunRoute, routedLLMCall } from "./routed-llm-call.js";
 import { buildRoutingReport } from "./routing/report.js";
 import { loadConfig } from "./config/load-config.js";
-import { computeTelemetryStats, formatStatsReport, loadTelemetryRecords } from "./telemetry/stats.js";
+import { computeTelemetryStats, formatStatsReport, loadAllTelemetryRecords, loadTelemetryRecords } from "./telemetry/stats.js";
+import { computeRoutingInsights, formatInsightsReport } from "./telemetry/analysis.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
@@ -243,6 +244,28 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "analyze" || command === "insights") {
+      const config = loadConfig(typeof flags.config === "string" ? flags.config : undefined);
+      const minSamples =
+        typeof flags["min-samples"] === "string"
+          ? parseInt(flags["min-samples"], 10)
+          : config.routing.learnedMinSamples ?? 5;
+      const useAll = flags.all === true || flags.all === "true" || flags.last === undefined;
+      const records = useAll
+        ? loadAllTelemetryRecords(config.telemetry.logPath)
+        : loadTelemetryRecords(
+            config.telemetry.logPath,
+            typeof flags.last === "string" ? parseInt(flags.last, 10) : 50
+          );
+      const insights = computeRoutingInsights(records, { minSamples });
+      if (json) {
+        console.log(JSON.stringify(insights, null, 2));
+      } else {
+        console.log(formatInsightsReport(insights));
+      }
+      return;
+    }
+
     console.error(`Unknown command: ${command}`);
     printHelp();
     process.exit(1);
@@ -327,6 +350,8 @@ Usage:
   maestro init [--profile <name>]     First-time setup (~/.maestro-ai, MCP config)
   maestro doctor                      Diagnose Ollama, LiteLLM, API keys
   maestro stats [--last N]            Telemetry summary (default 50)
+  maestro analyze [--all]             Telemetry routing insights & recommendations
+  maestro insights                    Alias for analyze
   maestro version                     Print package version
 
 Profiles (for init):
@@ -356,6 +381,9 @@ Flags:
   --budget-usd <n>         Session budget cap (enforced)
   --max-tier <tier>        Never route above this tier
   --always-prefer-local    Session policy: prefer local tiers
+  --last <n>               Limit telemetry records (stats/analyze)
+  --min-samples <n>        Min samples per task/tier for analyze (default 5)
+  --all                    Analyze all telemetry records (analyze default)
   --profile <name>         Config profile for init (default|ollama-only|cloud-only)
   --force                  Overwrite existing ~/.maestro-ai config on init
   --skip-doctor            Skip doctor check during init

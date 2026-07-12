@@ -4,6 +4,8 @@ import { getPrimaryEndpoint } from "../config/tier-config.js";
 import { buildDecisionExplanation, type DecisionExplanation } from "./explanation.js";
 import { buildValidationOutcome } from "./outcome.js";
 import { getHistoricalSuccessRate } from "../telemetry/stats.js";
+import { getTierRecommendation } from "../routing/learned.js";
+import type { TierRecommendation } from "../telemetry/analysis.js";
 import type { EvaluationResult, RoutedAttempt } from "../types.js";
 
 export interface CallOutcome {
@@ -34,6 +36,7 @@ export interface RoutingReport {
   explanation: DecisionExplanation;
   mode?: import("../types.js").RoutingMode;
   guardrails?: RoutingDecision["guardrails"];
+  telemetry_recommendation?: TierRecommendation | null;
 }
 
 export function buildRoutingReport(input: {
@@ -54,6 +57,15 @@ export function buildRoutingReport(input: {
           config.telemetry.logPath,
           analysis.taskType,
           explanationRouting.tier
+        )
+      : null;
+
+  const telemetryRecommendation =
+    config?.telemetry?.enabled
+      ? getTierRecommendation(
+          config.telemetry.logPath,
+          analysis.taskType,
+          { minSamples: config.routing.learnedMinSamples ?? 5 }
         )
       : null;
 
@@ -84,6 +96,7 @@ export function buildRoutingReport(input: {
     historical,
     fallbackModel,
     outcome,
+    telemetryRecommendation,
   });
 
   return {
@@ -108,6 +121,7 @@ export function buildRoutingReport(input: {
     explanation,
     mode: routing.mode,
     guardrails: routing.guardrails,
+    telemetry_recommendation: telemetryRecommendation,
   };
 }
 

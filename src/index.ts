@@ -128,6 +128,27 @@ export {
 } from "./telemetry/stats.js";
 export type { HistoricalSuccessRate } from "./telemetry/stats.js";
 
+export {
+  computeRoutingInsights,
+  formatInsightsReport,
+} from "./telemetry/analysis.js";
+export type {
+  AnalysisOptions,
+  LearnedReadiness,
+  RoutingInsights,
+  TierRecommendation,
+  TierTaskCell,
+} from "./telemetry/analysis.js";
+export { servedTier, servedModel } from "./telemetry/records.js";
+export {
+  learnedRoutingAvailable,
+  suggestTierFromTelemetry,
+  getTierRecommendation,
+  shouldApplyLearnedHint,
+  confidenceFromSample,
+} from "./routing/learned.js";
+export type { LearnedTierSuggestion, LearnedConfidence } from "./routing/learned.js";
+
 export { runDoctor } from "./doctor/health.js";
 export type { DoctorCheck, DoctorReport } from "./doctor/health.js";
 
@@ -150,6 +171,7 @@ export {
   handleProbeTool,
   handleRouteTool,
   handleStatsTool,
+  handleAnalyzeTool,
   buildMessages,
   buildOverrides,
   buildTaskHints,
@@ -160,6 +182,7 @@ export {
   probeToolInputSchema,
   routeToolInputSchema,
   statsToolInputSchema,
+  analyzeToolInputSchema,
 } from "./mcp/schemas.js";
 
 export {

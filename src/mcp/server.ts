@@ -2,12 +2,14 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   askToolInputSchema,
+  analyzeToolInputSchema,
   feedbackToolInputSchema,
   probeToolInputSchema,
   routeToolInputSchema,
   statsToolInputSchema,
 } from "./schemas.js";
 import {
+  handleAnalyzeTool,
   handleAskTool,
   handleDoctorTool,
   handleFeedbackTool,
@@ -104,7 +106,7 @@ export function createMaestroMcpServer(): McpServer {
     {
       title: "Maestro Stats",
       description:
-        "Telemetry summary: tier distribution, success/escalation rates, latency, cost estimates.",
+        "Telemetry summary: tier distribution, success/escalation rates, latency, cost estimates. Pass insights: true for routing analysis.",
       inputSchema: statsToolInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -114,6 +116,23 @@ export function createMaestroMcpServer(): McpServer {
       },
     },
     async (input) => textResult(await handleStatsTool(input))
+  );
+
+  server.registerTool(
+    "maestro_analyze",
+    {
+      title: "Maestro Analyze",
+      description:
+        "Aggregate telemetry into per-task routing insights, recommendations, and learned-routing readiness. Use before enabling learnedRoutingHints.",
+      inputSchema: analyzeToolInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => textResult(await handleAnalyzeTool(input))
   );
 
   server.registerTool(

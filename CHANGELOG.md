@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-07-12
+
+### Added
+- **Telemetry routing analysis** (`src/telemetry/analysis.ts`) — per-task × per-tier cells, recommendations, findings, mode comparisons, learned-routing readiness.
+- **`maestro analyze`** CLI (alias `insights`) — human-readable routing insights from telemetry.
+- **`maestro_analyze`** MCP tool — same analysis for agent harnesses.
+- **`maestro_stats` `insights: true`** — optional routing insights in stats responses.
+- **Learned routing hints** (opt-in) — `learnedRoutingHints` + `learnedMinSamples` in config; router nudges tier from telemetry when confidence is sufficient.
+- **`telemetry_recommendation`** in routing reports and decision explanations.
+- Shared **`servedTier()` / `servedModel()`** helpers in `src/telemetry/records.ts`.
+- Tests: `tests/analysis.test.ts`, `tests/learned.test.ts`.
+
+[0.9.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v0.9.0
+
 ## [0.8.0] - 2026-07-12
 
 ### Added

@@ -57,6 +57,7 @@ Config profiles in `config/` — edit `~/.maestro-ai/config.json` after `maestro
 npx maestro probe
 npx maestro doctor
 npx maestro stats --last 50
+npx maestro analyze
 ```
 
 ## Install options
@@ -105,7 +106,8 @@ claude mcp add maestro-ai -- node <path-to>/dist/mcp-server.js
 | `maestro_ask` | Route + execute LLM call with auto-escalation. Response includes full `routing` report. |
 | `maestro_probe` | Health-check each tier primary and fallback endpoints |
 | `maestro_doctor` | Infrastructure diagnostics (process, port, `/v1/models`, env vars) |
-| `maestro_stats` | Telemetry summary — tier mix, escalation rate, latency, cost |
+| `maestro_stats` | Telemetry summary — tier mix, escalation rate, latency, cost (`insights: true` for routing analysis) |
+| `maestro_analyze` | Per-task routing insights, recommendations, learned-routing readiness |
 | `maestro_feedback` | Record good/bad feedback on a prior `maestro_ask` response |
 
 ### MCP response shape
@@ -172,6 +174,29 @@ Declarative safety layer in `policy.json` → `guardrails`:
 
 Guardrail actions appear in the decision card under **Guardrails**.
 
+### Learned routing prep (v0.9+)
+
+Turn telemetry into routing insights before enabling automatic hints:
+
+```bash
+maestro analyze                    # all records — recommendations & findings
+maestro analyze --last 100         # recent window only
+maestro stats --last 50            # summary stats
+```
+
+MCP: `maestro_analyze` or `maestro_stats` with `insights: true`.
+
+Opt-in hints in `~/.maestro-ai/config.json`:
+
+```json
+"routing": {
+  "learnedRoutingHints": true,
+  "learnedMinSamples": 5
+}
+```
+
+When enabled, the router may nudge tier selection when telemetry shows a meaningfully better tier for the task type (medium+ confidence). Decision cards show telemetry recommendations even when hints are off.
+
 ### Routing policy
 
 Declarative rules in `~/.maestro-ai/policy.json` (copied on `maestro init`):
@@ -213,6 +238,7 @@ maestro ask "<task>" --json
 maestro route "<task>" --debug
 maestro doctor
 maestro stats --last 50
+maestro analyze
 ```
 
 ## Programmatic API

@@ -75,6 +75,9 @@ export interface RoutingConfig {
   preferLocal: boolean;
   longContextTokenThreshold: number;
   probeAvailability: boolean;
+  /** When true, nudge tier selection using telemetry recommendations (v0.9+) */
+  learnedRoutingHints?: boolean;
+  learnedMinSamples?: number;
 }
 
 export interface TelemetryConfig {
