@@ -7,7 +7,7 @@ import {
 import { loadConfig } from "./config/load-config.js";
 import { getPrimaryEndpoint } from "./config/tier-config.js";
 import { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-evaluator.js";
-import { chatCompletion, ProviderError } from "./provider/openai-compatible.js";
+import { chatCompletion, DEFAULT_MAX_TOKENS, ProviderError } from "./provider/openai-compatible.js";
 import { probeAllTiers, type TierProbeStatus } from "./provider/probe.js";
 import { routeTask } from "./router/model-router.js";
 import { annotateAttemptActions, buildAttemptLog } from "./routing/outcome.js";
@@ -130,6 +130,15 @@ export async function routedLLMCall(
   const maxAttempts =
     effectiveConfig.routing.enableEscalation ? 4 * (maxRetriesPerTier + 1) : 1;
 
+  // Truncation (finish_reason=length) is a parameter problem: retry the SAME
+  // tier with a larger max_tokens rather than escalating to a tier that will
+  // truncate the same way. Bounded so a model that always hits the cap can't
+  // loop forever.
+  let currentMaxTokens = DEFAULT_MAX_TOKENS;
+  let truncationRetries = 0;
+  const MAX_TRUNCATION_RETRIES = 2;
+  const MAX_TOKENS_CAP = 32768;
+
   while (totalAttempts < maxAttempts) {
     const tierStatus = statuses.get(currentTier);
     const endpoint =
@@ -149,6 +158,7 @@ export async function routedLLMCall(
         responseFormat: input.responseSchema
           ? { type: "json_object" }
           : undefined,
+        maxTokens: currentMaxTokens,
       });
 
       attempt.latencyMs = response.latencyMs;
@@ -174,6 +184,12 @@ export async function routedLLMCall(
       lastEvaluation = evaluation;
 
       if (evaluation.pass) break;
+
+      if (evaluation.truncated && truncationRetries < MAX_TRUNCATION_RETRIES) {
+        currentMaxTokens = Math.min(currentMaxTokens * 2, MAX_TOKENS_CAP);
+        truncationRetries++;
+        continue;
+      }
 
       if (evaluation.retryRecommended && tierAttemptCount <= maxRetriesPerTier) {
         continue;

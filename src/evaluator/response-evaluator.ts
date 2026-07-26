@@ -51,8 +51,12 @@ export function evaluateResponse(
   const toolCheck = checkToolCalls(context);
   if (toolCheck) checks.push(toolCheck);
 
+  const truncation = checkTruncation(context);
+  const truncated = truncation !== null;
+  if (truncation) checks.push(truncation);
+
   const pass = checks.every((c) => c.pass);
-  const signals = deriveEvaluationSignals(content, checks, pass);
+  const signals = deriveEvaluationSignals(content, checks, pass, truncated);
 
   return {
     pass,
@@ -60,19 +64,32 @@ export function evaluateResponse(
     retryRecommended: signals.retryRecommended,
     escalationRecommended: signals.escalationRecommended,
     checks,
+    truncated: truncated || undefined,
   };
 }
 
 function deriveEvaluationSignals(
   content: string,
   checks: EvaluationCheck[],
-  pass: boolean
+  pass: boolean,
+  truncated: boolean
 ): Pick<EvaluationResult, "reason" | "retryRecommended" | "escalationRecommended"> {
   const nonEmpty = checks.find((c) => c.name === "non_empty");
   const contentIntegrity = checks.find((c) => c.name === "content_integrity");
   const refusal = checks.find((c) => c.name === "no_refusal");
   const jsonCheck = checks.find((c) => c.name === "valid_json");
   const toolCheck = checks.find((c) => c.name === "tool_calls_valid");
+
+  // Truncation (finish_reason=length) is a parameter problem, not a
+  // model-capability problem: retry the SAME tier with a larger max_tokens
+  // rather than escalating to a tier that will truncate the same way.
+  if (truncated) {
+    return {
+      reason: "Response truncated (finish_reason=length) — retry with larger max_tokens",
+      retryRecommended: true,
+      escalationRecommended: false,
+    };
+  }
 
   const retryRecommended =
     !pass &&
@@ -142,7 +159,7 @@ export async function evaluateResponseAsync(
   }
 
   const pass = checks.every((c) => c.pass);
-  const signals = deriveEvaluationSignals(content, checks, pass);
+  const signals = deriveEvaluationSignals(content, checks, pass, base.truncated ?? false);
 
   return {
     ...base,
@@ -204,15 +221,38 @@ function checkContentIntegrity(
   return { name: "content_integrity", pass: true };
 }
 
+/** Detect finish_reason=length — the model hit the max-token cap and the
+ *  output was cut off. Fires whether or not partial content is present,
+ *  because a truncated-but-non-empty response still passes the non-empty and
+ *  content-integrity checks and would otherwise be accepted silently. */
+function checkTruncation(context: EvaluatorContext): EvaluationCheck | null {
+  if (!context.rawResponse) return null;
+  const extracted = extractCompletionFromRaw(
+    context.rawResponse as Parameters<typeof extractCompletionFromRaw>[0]
+  );
+  if (extracted.finishReason !== "length") return null;
+  return {
+    name: "truncation",
+    pass: false,
+    reason: "Response truncated (finish_reason=length) — output hit the max-token cap",
+  };
+}
+
 function checkRefusal(content: string, taskAllowed: boolean): EvaluationCheck {
   if (!taskAllowed) {
     return { name: "no_refusal", pass: true };
   }
-  const refused = REFUSAL_PATTERNS.some((p) => p.test(content));
+  // A genuine refusal is short and leads the response. Matching refusal
+  // phrases anywhere in a long response false-positives on legitimate text
+  // that happens to contain "I can't" or "as an AI" (e.g. an analysis
+  // discussing refusal handling). Scope to the opening and gate on length.
+  const head = content.slice(0, 150).trimStart();
+  const looksLikeRefusal =
+    content.length < 500 && REFUSAL_PATTERNS.some((p) => p.test(head));
   return {
     name: "no_refusal",
-    pass: !refused,
-    reason: refused ? "Model appears to have refused the task" : undefined,
+    pass: !looksLikeRefusal,
+    reason: looksLikeRefusal ? "Model appears to have refused the task" : undefined,
   };
 }
 
