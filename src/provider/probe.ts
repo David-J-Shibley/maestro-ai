@@ -21,6 +21,38 @@ export interface TierProbeStatus {
   effective?: ReturnType<typeof resolveEndpointForTier>;
 }
 
+export type ProbeAllResult = {
+  unavailable: Set<ModelTier>;
+  results: ProbeResult[];
+  tiers: TierProbeStatus[];
+};
+
+const DEFAULT_PROBE_CACHE_TTL_MS = 30_000;
+
+type CacheEntry = {
+  expiresAt: number;
+  value: ProbeAllResult;
+};
+
+const probeCache = new Map<string, CacheEntry>();
+
+function cacheKey(config: RouterConfig): string {
+  const models = Object.entries(config.models)
+    .map(([tier, tc]) => {
+      const p = tc.primary;
+      const f = tc.fallback;
+      return `${tier}:${p.provider}:${p.model}:${p.baseUrl}:${f?.provider ?? ""}:${f?.model ?? ""}:${f?.baseUrl ?? ""}`;
+    })
+    .sort()
+    .join("|");
+  return models;
+}
+
+/** Clear in-memory probe cache (tests / doctor force-refresh). */
+export function clearProbeCache(): void {
+  probeCache.clear();
+}
+
 export async function probeEndpoint(
   endpoint: ModelEndpointConfig,
   timeoutMs = 3000
@@ -101,9 +133,7 @@ export async function probeTier(
   };
 }
 
-export async function probeAllTiers(
-  config: RouterConfig
-): Promise<{ unavailable: Set<ModelTier>; results: ProbeResult[]; tiers: TierProbeStatus[] }> {
+async function probeAllTiersUncached(config: RouterConfig): Promise<ProbeAllResult> {
   const unavailable = new Set<ModelTier>();
   const results: ProbeResult[] = [];
   const tiers: TierProbeStatus[] = [];
@@ -121,6 +151,47 @@ export async function probeAllTiers(
   );
 
   return { unavailable, results, tiers };
+}
+
+/**
+ * Probe all tiers. Results are cached for `routing.probeCacheTtlMs` (default 30s)
+ * so frequent subtasks don't re-hit every endpoint.
+ */
+export async function probeAllTiers(
+  config: RouterConfig,
+  options?: { force?: boolean }
+): Promise<ProbeAllResult> {
+  const ttl =
+    config.routing.probeCacheTtlMs === undefined
+      ? DEFAULT_PROBE_CACHE_TTL_MS
+      : Math.max(0, config.routing.probeCacheTtlMs);
+
+  if (!options?.force && ttl > 0) {
+    const key = cacheKey(config);
+    const hit = probeCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) {
+      return {
+        unavailable: new Set(hit.value.unavailable),
+        results: hit.value.results,
+        tiers: hit.value.tiers,
+      };
+    }
+  }
+
+  const value = await probeAllTiersUncached(config);
+
+  if (!options?.force && ttl > 0) {
+    probeCache.set(cacheKey(config), {
+      expiresAt: Date.now() + ttl,
+      value: {
+        unavailable: new Set(value.unavailable),
+        results: value.results,
+        tiers: value.tiers,
+      },
+    });
+  }
+
+  return value;
 }
 
 export function getResolvedEndpoint(

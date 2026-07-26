@@ -40,6 +40,8 @@ export interface RoutedLLMCallOptions {
   configPath?: string;
   evaluatorContext?: EvaluatorContext;
   overrides?: RouterOverrides;
+  /** Force a live probe even on dry-run routes */
+  forceProbe?: boolean;
 }
 
 export interface DryRunResult {
@@ -342,7 +344,15 @@ export async function dryRunRoute(
   let unavailable = new Set<ModelTier>();
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
 
-  if (effectiveConfig.routing.probeAvailability) {
+  // Dry-run defaults to intended tier (no live probe) so agents see routing intent.
+  // Opt in via routing.probeOnDryRun, overrides.debug, or options.forceProbe.
+  const shouldProbe =
+    effectiveConfig.routing.probeAvailability &&
+    (options.forceProbe === true ||
+      effectiveConfig.routing.probeOnDryRun === true ||
+      overrides.debug === true);
+
+  if (shouldProbe) {
     probe = await probeAllTiers(effectiveConfig);
     unavailable = probe.unavailable;
   }
@@ -360,11 +370,23 @@ export async function dryRunRoute(
   return { analysis, routing, probe };
 }
 
-function mergeOverrides(
+export function mergeOverrides(
   a?: RouterOverrides,
   b?: RouterOverrides
 ): RouterOverrides {
-  return { ...a, ...b };
+  if (!a) return { ...b };
+  if (!b) return { ...a };
+  return {
+    ...a,
+    ...b,
+    session:
+      a.session || b.session
+        ? {
+            ...a.session,
+            ...b.session,
+          }
+        : undefined,
+  };
 }
 
 function dryRunResult(

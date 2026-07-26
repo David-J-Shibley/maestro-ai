@@ -69,10 +69,10 @@ export { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-ev
 
 export { chatCompletion, ProviderError } from "./provider/openai-compatible.js";
 export { chatCompletionStream, routedLLMStream } from "./provider/stream.js";
-export { probeAllTiers, probeEndpoint, probeTier } from "./provider/probe.js";
+export { probeAllTiers, probeEndpoint, probeTier, clearProbeCache } from "./provider/probe.js";
 
 export { routeTask } from "./router/model-router.js";
-export { buildRoutingReport } from "./routing/report.js";
+export { buildRoutingReport, compactRoutingReport } from "./routing/report.js";
 export type { RoutingReport, CallOutcome } from "./routing/report.js";
 export {
   buildDecisionExplanation,
@@ -113,7 +113,7 @@ export {
 } from "./routing/budget.js";
 export type { BudgetStatus } from "./routing/budget.js";
 
-export { dryRunRoute, routedLLMCall } from "./routed-llm-call.js";
+export { dryRunRoute, routedLLMCall, mergeOverrides } from "./routed-llm-call.js";
 export type { RoutedLLMCallOptions, DryRunResult } from "./routed-llm-call.js";
 
 export { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
@@ -189,6 +189,7 @@ export {
   handleRouteTool,
   handleStatsTool,
   handleAnalyzeTool,
+  handleWorkflowTool,
   buildMessages,
   buildOverrides,
   buildTaskHints,
@@ -200,7 +201,11 @@ export {
   routeToolInputSchema,
   statsToolInputSchema,
   analyzeToolInputSchema,
+  workflowToolInputSchema,
 } from "./mcp/schemas.js";
+
+export { createProxyServer, startProxyServer } from "./proxy/server.js";
+export type { ProxyServerOptions } from "./proxy/server.js";
 
 export {
   benchyDelegate,

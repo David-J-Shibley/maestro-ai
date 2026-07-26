@@ -105,9 +105,27 @@ export function selectWorkflowPattern(
   }
 
   if (["code_edit", "debugging", "refactoring"].includes(analysis.taskType)) {
+    const mentionsTests =
+      /\b(test|tests|spec|jest|vitest|pytest|build|ci\b|tsc|typecheck|compile)\b/i.test(prompt);
+    const wantsDepth =
+      input.taskHints?.quality === "best" ||
+      analysis.difficulty === "hard" ||
+      analysis.riskLevel === "high" ||
+      mentionsTests ||
+      Boolean(input.hasValidationHooks);
+
+    if (wantsDepth) {
+      return {
+        pattern: "implement-test-fix",
+        why: mentionsTests
+          ? "Coding task that mentions tests/build uses implement → test → fix"
+          : "Hard/high-risk or best-quality coding task uses implement → test → fix",
+      };
+    }
+
     return {
-      pattern: "implement-test-fix",
-      why: "Coding task uses implement → test → fix workflow",
+      pattern: "single-shot",
+      why: "Coding task without test/build hooks uses a single routed call (avoid multi-step theater)",
     };
   }
 

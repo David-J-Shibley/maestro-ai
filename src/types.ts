@@ -75,6 +75,16 @@ export interface RoutingConfig {
   preferLocal: boolean;
   longContextTokenThreshold: number;
   probeAvailability: boolean;
+  /**
+   * Cache probe results this many ms (default 30000).
+   * Set 0 to disable caching. Reduces latency when many subtasks fire in a session.
+   */
+  probeCacheTtlMs?: number;
+  /**
+   * When true, dry-run route (`maestro_route` / `dryRunRoute`) still probes endpoints.
+   * Default false — dry-run returns the *intended* tier without availability remapping.
+   */
+  probeOnDryRun?: boolean;
   /** When true, nudge tier selection using telemetry recommendations (v0.9+) */
   learnedRoutingHints?: boolean;
   learnedMinSamples?: number;
@@ -133,6 +143,8 @@ export interface PrivacyPolicyRule {
   keywords: string[];
   max_tier: ModelTier;
   reason?: string;
+  /** When true (default), also match common secret/credential regex patterns */
+  detect_secrets?: boolean;
 }
 
 export type GuardrailKind = "budget" | "privacy" | "latency";

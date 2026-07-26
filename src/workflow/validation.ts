@@ -65,6 +65,19 @@ export function validateWorkflowOutput(
     reason: placeholderCheck ? undefined : "Final output contains placeholders",
   });
 
+  const skippedToolSteps = steps.filter(
+    (s) =>
+      s.status === "skipped" &&
+      /no test\/build runners provided/i.test(s.content ?? "")
+  );
+  if (skippedToolSteps.length > 0) {
+    checks.push({
+      name: "tool_validation_skipped",
+      pass: true,
+      reason: `Validation skipped for: ${skippedToolSteps.map((s) => s.stepId).join(", ")} (no runTests/runBuild hooks)`,
+    });
+  }
+
   const pass = checks.every((c) => c.pass);
   const passedCount = checks.filter((c) => c.pass).length;
   const confidence = pass ? 0.9 : passedCount / checks.length;

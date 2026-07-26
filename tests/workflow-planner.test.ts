@@ -44,6 +44,18 @@ describe("workflow planner", () => {
     expect(why).toContain("decomposition");
   });
 
+  it("selects single-shot for simple HTML demos without test hooks", () => {
+    const analysis = analyzeTask({ userPrompt: "make me a simple HTML landing page" });
+    const { pattern, why } = selectWorkflowPattern(
+      analysis,
+      input("make me a simple HTML landing page"),
+      resolveModeConstraints("balanced"),
+      "balanced"
+    );
+    expect(pattern).toBe("single-shot");
+    expect(why).toMatch(/single routed call|decomposition/i);
+  });
+
   it("selects implement-test-fix for coding tasks", () => {
     const analysis = analyzeTask({ userPrompt: "Fix the failing auth middleware tests" });
     const { pattern } = selectWorkflowPattern(

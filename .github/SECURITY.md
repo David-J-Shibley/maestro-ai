@@ -22,6 +22,7 @@ Maestro AI routes prompts to local and remote LLM providers. The following are i
 - Credential handling — API keys (Featherless, AWS), the LiteLLM master key
 - Telemetry logging — what gets written to `~/.maestro-ai/telemetry.jsonl`
 - The LiteLLM proxy configuration shipped in `config/`
+- The Maestro transparent proxy (`maestro proxy`) — intended for **localhost only**; it does not authenticate callers by default
 - The MCP server surface and CLI
 
 ## Credential handling

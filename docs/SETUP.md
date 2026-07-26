@@ -101,6 +101,35 @@ claude mcp add maestro-ai -- node /path/to/maestro-ai/dist/mcp-server.js
 
 Set `MAESTRO_CONFIG=~/.maestro-ai/config.json` in the MCP env.
 
+## Transparent proxy (Cursor / Claude Code)
+
+Use Maestro as an OpenAI- or Anthropic-compatible base URL so the harness routes every call through Maestro without MCP tool calls.
+
+```bash
+# From a git checkout
+node dist/cli.js proxy --port 4100 --max-tier hosted_oss --prefer-local
+```
+
+| Client | `ANTHROPIC_BASE_URL` / OpenAI base | Path Claude/Cursor hit |
+|--------|------------------------------------|-------------------------|
+| Claude Code | `http://127.0.0.1:4100` (**no** `/v1`) | `/v1/messages` |
+| Cursor / OpenAI SDK | `http://127.0.0.1:4100/v1` | `/v1/chat/completions` |
+
+Example Claude Code settings file:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "false",
+    "ANTHROPIC_BASE_URL": "http://localhost:4100",
+    "ANTHROPIC_AUTH_TOKEN": "maestro",
+    "ANTHROPIC_MODEL": "maestro"
+  }
+}
+```
+
+`--max-tier hosted_oss` keeps Claude Code’s large system+tools prompts off Bedrock (useful when AWS SSO is expired).
+
 ## Verify
 
 ```bash
@@ -117,12 +146,10 @@ See `.env.example` in the repo or `~/.maestro-ai/.env.example` after init:
 |----------|--------------|---------|
 | `MAESTRO_CONFIG` | Optional | Defaults to `~/.maestro-ai/config.json` after init |
 | `LITELLM_MASTER_KEY` | LiteLLM profiles | Proxy auth (default: `sk-litellm-local`) |
-
-> **Note:** `sk-litellm-local` is a built-in convenience default for the LiteLLM proxy, which binds to `localhost:4000` only — it is safe to keep for local development. If you ever expose LiteLLM beyond localhost, override it with a strong random key: `export LITELLM_MASTER_KEY=$(openssl rand -hex 32)` before starting the proxy.
-
-> **Note:** `sk-litellm-local` is a built-in convenience default for the LiteLLM proxy, which binds to `localhost:4000` only — it is safe to keep for local development. If you ever expose LiteLLM beyond localhost, override it with a strong random key: `export LITELLM_MASTER_KEY=$(openssl rand -hex 32)` before starting the proxy.
 | `FEATHERLESS_API_KEY` | Hosted OSS / GLM | Featherless API |
 | `AWS_*` | Premium (Bedrock) | Claude Sonnet via Bedrock |
+
+> **Note:** `sk-litellm-local` is a built-in convenience default for the LiteLLM proxy, which binds to `localhost:4000` only — it is safe to keep for local development. If you ever expose LiteLLM beyond localhost, override it with a strong random key: `export LITELLM_MASTER_KEY=$(openssl rand -hex 32)` before starting the proxy.
 
 ## Troubleshooting
 
@@ -133,6 +160,9 @@ See `.env.example` in the repo or `~/.maestro-ai/.env.example` after init:
 | Model not found | `ollama pull <model>` — init lists missing ones |
 | MCP tools missing | Rebuild (`npm run build`), reload MCP, check `mcp-config.json` paths |
 | Zombie LiteLLM | `maestro doctor` → kill stale process, restart |
+| Claude Code “model may not exist” via Maestro | `ANTHROPIC_BASE_URL` must **not** end in `/v1`; unset `CLAUDE_CODE_USE_BEDROCK` |
+| Proxy → Bedrock “security token expired” | `aws sso login --profile bedrock`, or restart Maestro with `--max-tier hosted_oss` |
+| Maestro proxy silent crash | Use v1.1+ (request logging + crash guards); check stderr for `[maestro-proxy]` |
 
 ## Custom config
 

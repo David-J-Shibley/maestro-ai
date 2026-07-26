@@ -56,6 +56,8 @@
     "preferLocal": true,
     "longContextTokenThreshold": 32000,
     "probeAvailability": true,
+    "probeCacheTtlMs": 30000,
+    "probeOnDryRun": false,
     "learnedRoutingHints": false,
     "learnedMinSamples": 5
   },

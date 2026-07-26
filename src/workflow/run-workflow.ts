@@ -44,7 +44,13 @@ export async function runWorkflow(
   if (input.mode) baseOverrides.mode = input.mode;
   const activeMode = resolveActiveMode(baseOverrides, config);
   const runtime = applyModeToRuntime(activeMode, config, baseOverrides);
-  const effectiveInput = { ...input, overrides: runtime.overrides };
+  const effectiveInput: RunWorkflowInput = {
+    ...input,
+    overrides: runtime.overrides,
+    hasValidationHooks:
+      input.hasValidationHooks ??
+      Boolean(options.evaluatorContext?.runTests || options.evaluatorContext?.runBuild),
+  };
 
   const plan = planWorkflow(effectiveInput, analysis, config);
 

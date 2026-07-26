@@ -50,7 +50,14 @@ export const routeToolInputSchema = z.object({
   model_tier: tierSchema.optional().describe("Force a specific model tier."),
   prefer_local: z.boolean().optional().describe("Prefer local models when possible."),
   premium_only: z.boolean().optional().describe("Always route to the premium tier."),
-  debug: z.boolean().optional().describe("Include detailed routing trace."),
+  debug: z
+    .boolean()
+    .optional()
+    .describe("Include full debug trace and probe details (default compact report)."),
+  probe: z
+    .boolean()
+    .optional()
+    .describe("Force live availability probe on route (overrides dry-run default of no probe)."),
   config_path: z.string().optional().describe("Path to Maestro AI config JSON."),
   session_id: z
     .string()
@@ -76,10 +83,50 @@ export const askToolInputSchema = routeToolInputSchema.extend({
     .boolean()
     .optional()
     .describe("If true, return routing decision without calling an LLM."),
+  workflow: z
+    .enum([
+      "auto",
+      "single-shot",
+      "plan-execute-validate",
+      "parallel-synthesis",
+      "critique-revise",
+      "implement-test-fix",
+      "extract-normalize-validate",
+      "critique",
+      "extract",
+      "single",
+    ])
+    .optional()
+    .describe(
+      "Optional workflow pattern. When set (or auto), runs multi-step orchestration instead of a single call."
+    ),
+  dry_run_workflow: z
+    .boolean()
+    .optional()
+    .describe("If true with workflow, preview the plan without executing LLM steps."),
+});
+
+export const workflowToolInputSchema = askToolInputSchema.extend({
+  workflow: z
+    .enum([
+      "auto",
+      "single-shot",
+      "plan-execute-validate",
+      "parallel-synthesis",
+      "critique-revise",
+      "implement-test-fix",
+      "extract-normalize-validate",
+      "critique",
+      "extract",
+      "single",
+    ])
+    .default("auto")
+    .describe("Workflow pattern to execute (default auto)."),
 });
 
 export const probeToolInputSchema = z.object({
   config_path: z.string().optional().describe("Path to Maestro AI config JSON."),
+  force: z.boolean().optional().describe("Bypass probe cache and re-check endpoints."),
 });
 
 export const statsToolInputSchema = z.object({
@@ -115,6 +162,7 @@ export const feedbackToolInputSchema = z.object({
 
 export type RouteToolInput = z.infer<typeof routeToolInputSchema>;
 export type AskToolInput = z.infer<typeof askToolInputSchema>;
+export type WorkflowToolInput = z.infer<typeof workflowToolInputSchema>;
 export type ProbeToolInput = z.infer<typeof probeToolInputSchema>;
 export type StatsToolInput = z.infer<typeof statsToolInputSchema>;
 export type AnalyzeToolInput = z.infer<typeof analyzeToolInputSchema>;
