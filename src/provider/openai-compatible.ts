@@ -17,7 +17,13 @@ export interface ChatCompletionRequest {
   tools?: unknown[];
   responseFormat?: { type: "json_object" } | { type: "json_schema"; json_schema: unknown };
   temperature?: number;
+  /** Max generation tokens. Sent on every request so output length is governed
+   *  by us, not by a provider default (which silently truncates at ~4096). */
+  maxTokens?: number;
 }
+
+/** Default output budget. Doubled on truncation retries by routed-llm-call. */
+export const DEFAULT_MAX_TOKENS = 8192;
 
 export class ProviderError extends Error {
   constructor(
@@ -45,6 +51,7 @@ export async function chatCompletion(
     model: endpoint.model,
     messages: request.messages,
     temperature: request.temperature ?? 0.2,
+    max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
   };
 
   if (request.tools?.length) {

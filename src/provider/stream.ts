@@ -4,7 +4,11 @@ import type {
   ModelEndpointConfig,
   ModelTier,
 } from "../types.js";
-import { chatCompletion, type ChatCompletionRequest } from "./openai-compatible.js";
+import {
+  chatCompletion,
+  DEFAULT_MAX_TOKENS,
+  type ChatCompletionRequest,
+} from "./openai-compatible.js";
 
 export interface StreamChunk {
   content: string;
@@ -28,6 +32,7 @@ export async function* chatCompletionStream(
     model: endpoint.model,
     messages: request.messages,
     temperature: request.temperature ?? 0.2,
+    max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
     stream: true,
   };
 
@@ -87,7 +92,8 @@ export async function routedLLMStream(
   endpoint: ModelEndpointConfig,
   tier: ModelTier,
   messages: ChatMessage[],
-  tools?: unknown[]
+  tools?: unknown[],
+  maxTokens?: number
 ): Promise<AsyncGenerator<StreamChunk>> {
-  return chatCompletionStream(endpoint, tier, { messages, tools });
+  return chatCompletionStream(endpoint, tier, { messages, tools, maxTokens });
 }

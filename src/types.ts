@@ -251,6 +251,10 @@ export interface EvaluationResult {
   retryRecommended: boolean;
   escalationRecommended: boolean;
   checks: EvaluationCheck[];
+  /** True when finish_reason=length — output hit the max-token cap.
+   *  Truncation is a parameter problem, not a model-capability problem:
+   *  retry the SAME tier with a larger max_tokens rather than escalating. */
+  truncated?: boolean;
 }
 
 export interface EvaluationCheck {
