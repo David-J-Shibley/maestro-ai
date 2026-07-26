@@ -127,8 +127,6 @@ export async function routedLLMCall(
   let totalAttempts = 0;
   let tierAttemptCount = 0;
   const maxRetriesPerTier = effectiveConfig.routing.maxRetriesPerTier;
-  const maxAttempts =
-    effectiveConfig.routing.enableEscalation ? 4 * (maxRetriesPerTier + 1) : 1;
 
   // Truncation (finish_reason=length) is a parameter problem: retry the SAME
   // tier with a larger max_tokens rather than escalating to a tier that will
@@ -138,6 +136,12 @@ export async function routedLLMCall(
   let truncationRetries = 0;
   const MAX_TRUNCATION_RETRIES = 2;
   const MAX_TOKENS_CAP = 32768;
+
+  // Truncation retries are same-tier and safe, so they run even when escalation
+  // is disabled. Normal same-tier retries stay gated on enableEscalation below.
+  const maxAttempts = effectiveConfig.routing.enableEscalation
+    ? 4 * (maxRetriesPerTier + 1)
+    : 1 + MAX_TRUNCATION_RETRIES;
 
   while (totalAttempts < maxAttempts) {
     const tierStatus = statuses.get(currentTier);
@@ -191,7 +195,11 @@ export async function routedLLMCall(
         continue;
       }
 
-      if (evaluation.retryRecommended && tierAttemptCount <= maxRetriesPerTier) {
+      if (
+        evaluation.retryRecommended &&
+        effectiveConfig.routing.enableEscalation &&
+        tierAttemptCount <= maxRetriesPerTier
+      ) {
         continue;
       }
 

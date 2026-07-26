@@ -28,6 +28,15 @@ function makeConfig(): RouterConfig {
   return loadConfigFromString(CONFIG_JSON);
 }
 
+const NO_ESCALATION_CONFIG = CONFIG_JSON.replace(
+  '"enableEscalation": true',
+  '"enableEscalation": false'
+);
+
+function makeNoEscalationConfig(): RouterConfig {
+  return loadConfigFromString(NO_ESCALATION_CONFIG);
+}
+
 const INITIAL_ROUTING: RoutingDecision = {
   tier: "local_fast",
   model: "fast",
@@ -316,5 +325,84 @@ describe("evaluator-driven escalation flow", () => {
     expect(result.routing.tier).toBe("local_fast");
     expect(result.evaluation.pass).toBe(false);
     expect(result.evaluation.truncated).toBe(true);
+  });
+
+  it("runs truncation retries even when escalation is disabled", async () => {
+    const maxTokensSent: number[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as { max_tokens?: number };
+        maxTokensSent.push(body.max_tokens ?? -1);
+        const callIdx = maxTokensSent.length - 1;
+        const truncated = callIdx < 2;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [
+              {
+                message: {
+                  content: truncated
+                    ? "partial answer that continues"
+                    : "complete answer here that is finished",
+                },
+                finish_reason: truncated ? "length" : "stop",
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          text: async () => "",
+        } as Response;
+      })
+    );
+
+    const result = await routedLLMCall(
+      {
+        messages: [{ role: "user", content: "Write a long report" }],
+        modelTier: "local_fast",
+      },
+      { config: makeNoEscalationConfig() }
+    );
+
+    expect(maxTokensSent).toEqual([8192, 16384, 32768]);
+    expect(result.escalated).toBe(false);
+    expect(result.evaluation.pass).toBe(true);
+    expect(result.routing.tier).toBe("local_fast");
+  });
+
+  it("does not retry normal failures when escalation is disabled", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [
+              { message: { content: "not json" }, finish_reason: "stop" },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          text: async () => "",
+        } as Response;
+      })
+    );
+
+    const result = await routedLLMCall(
+      {
+        messages: [{ role: "user", content: "Return JSON" }],
+        responseSchema: { type: "object" },
+        modelTier: "local_fast",
+      },
+      { config: makeNoEscalationConfig() }
+    );
+
+    // Single shot — no same-tier retry, no escalation.
+    expect(calls).toBe(1);
+    expect(result.escalated).toBe(false);
+    expect(result.evaluation.pass).toBe(false);
   });
 });
