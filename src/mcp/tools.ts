@@ -1,12 +1,17 @@
 import { loadConfig } from "../config/load-config.js";
 import { dryRunRoute, routedLLMCall } from "../routed-llm-call.js";
-import { probeAllTiers } from "../provider/probe.js";
-import { buildRoutingReport, enrichAskResponse } from "../routing/report.js";
+import { clearProbeCache, probeAllTiers } from "../provider/probe.js";
+import {
+  buildRoutingReport,
+  compactRoutingReport,
+  enrichAskResponse,
+} from "../routing/report.js";
 import { runDoctor } from "../doctor/health.js";
 import { computeTelemetryStats, loadAllTelemetryRecords, loadTelemetryRecords } from "../telemetry/stats.js";
 import { computeRoutingInsights, formatInsightsReport } from "../telemetry/analysis.js";
 import { learnedRoutingAvailable } from "../routing/learned.js";
 import { recordUserFeedback } from "../telemetry/logger.js";
+import { dryRunWorkflow, runWorkflow } from "../workflow/run-workflow.js";
 import type { ChatMessage, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
 import type {
   AnalyzeToolInput,
@@ -15,6 +20,7 @@ import type {
   ProbeToolInput,
   RouteToolInput,
   StatsToolInput,
+  WorkflowToolInput,
 } from "./schemas.js";
 
 export function buildMessages(prompt: string, systemPrompt?: string): ChatMessage[] {
@@ -63,6 +69,10 @@ export function buildOverrides(input: RouteToolInput): RouterOverrides {
   };
 }
 
+function presentReport(report: ReturnType<typeof buildRoutingReport>, debug?: boolean) {
+  return debug ? report : compactRoutingReport(report);
+}
+
 export async function handleRouteTool(input: RouteToolInput) {
   const messages = buildMessages(input.prompt, input.system_prompt);
   const config = loadConfig(input.config_path);
@@ -72,21 +82,31 @@ export async function handleRouteTool(input: RouteToolInput) {
       taskHints: buildTaskHints(input),
       overrides: buildOverrides(input),
     },
-    { config }
+    { config, forceProbe: input.probe === true }
   );
 
   const contextTokens = estimateContextTokens(messages);
 
-  return buildRoutingReport({
+  const report = buildRoutingReport({
     routing: result.routing,
     analysis: result.analysis,
     probe: result.probe,
     contextTokens,
     config,
+    verbose: input.debug === true,
   });
+
+  return presentReport(report, input.debug);
 }
 
 export async function handleAskTool(input: AskToolInput) {
+  if (input.workflow || input.dry_run_workflow) {
+    return handleWorkflowTool({
+      ...input,
+      workflow: input.workflow ?? "auto",
+    });
+  }
+
   const messages = buildMessages(input.prompt, input.system_prompt);
   const config = loadConfig(input.config_path);
   const overrides = {
@@ -110,6 +130,7 @@ export async function handleAskTool(input: AskToolInput) {
     probe: result.probe,
     contextTokens: estimateContextTokens(messages),
     config,
+    verbose: input.debug === true,
     callOutcome: input.dry_run
       ? undefined
       : {
@@ -122,32 +143,111 @@ export async function handleAskTool(input: AskToolInput) {
   });
 
   if (input.dry_run) {
-    return { dry_run: true, routing: report };
+    return { dry_run: true, routing: presentReport(report, input.debug) };
   }
 
-  return enrichAskResponse(
-    {
-      content: result.response.content,
-      escalated: result.escalated,
-      evaluation: {
-        pass: result.evaluation.pass,
-        reason: result.evaluation.reason,
-        retry_recommended: result.evaluation.retryRecommended,
-        escalation_recommended: result.evaluation.escalationRecommended,
-        checks: result.evaluation.checks,
+  const presented = presentReport(report, input.debug);
+  if (input.debug) {
+    return enrichAskResponse(
+      {
+        content: result.response.content,
+        escalated: result.escalated,
+        evaluation: {
+          pass: result.evaluation.pass,
+          reason: result.evaluation.reason,
+          retry_recommended: result.evaluation.retryRecommended,
+          escalation_recommended: result.evaluation.escalationRecommended,
+          checks: result.evaluation.checks,
+        },
+        usage: result.response.usage,
+        latency_ms: result.response.latencyMs,
+        attempts: result.attempts,
+        telemetry_id: result.telemetryId,
       },
-      usage: result.response.usage,
-      latency_ms: result.response.latencyMs,
-      attempts: result.attempts,
-      telemetry_id: result.telemetryId,
+      report
+    );
+  }
+
+  return {
+    content: result.response.content,
+    escalated: result.escalated,
+    evaluation: {
+      pass: result.evaluation.pass,
+      reason: result.evaluation.reason,
     },
-    report
+    usage: result.response.usage,
+    latency_ms: result.response.latencyMs,
+    telemetry_id: result.telemetryId,
+    routing: presented,
+    explanation: (presented as { explanation?: unknown }).explanation ?? report.explanation,
+  };
+}
+
+export async function handleWorkflowTool(input: WorkflowToolInput) {
+  const messages = buildMessages(input.prompt, input.system_prompt);
+  const config = loadConfig(input.config_path);
+  const overrides = buildOverrides(input);
+  const workflow = input.workflow ?? "auto";
+
+  if (input.dry_run_workflow || input.dry_run) {
+    const dry = await dryRunWorkflow(
+      {
+        messages,
+        responseSchema: input.response_schema,
+        taskHints: buildTaskHints(input),
+        overrides,
+        workflow,
+      },
+      { config }
+    );
+    return {
+      dry_run: true,
+      workflow: dry.plan.pattern,
+      plan: dry.plan,
+      step_routes: dry.stepRoutes,
+      report: dry.report,
+    };
+  }
+
+  const result = await runWorkflow(
+    {
+      messages,
+      responseSchema: input.response_schema,
+      taskHints: buildTaskHints(input),
+      overrides,
+      workflow,
+    },
+    { config }
   );
+
+  return {
+    content: result.finalOutput,
+    workflow: result.workflow.pattern,
+    why: result.workflow.why,
+    steps: result.steps.map((s) => ({
+      id: s.stepId,
+      name: s.name,
+      status: s.status,
+      tier: s.actualTier,
+      model: s.model,
+    })),
+    validation: result.validation,
+    report: input.debug ? result.report : { markdown: result.report.markdown, finalStatus: result.report.finalStatus },
+    telemetry_id: result.telemetry.workflowId,
+    analysis: result.analysis
+      ? {
+          taskType: result.analysis.taskType,
+          difficulty: result.analysis.difficulty,
+          riskLevel: result.analysis.riskLevel,
+        }
+      : undefined,
+  };
 }
 
 export async function handleProbeTool(input: ProbeToolInput) {
   const config = loadConfig(input.config_path);
-  const result = await probeAllTiers(config);
+  if (input.force) clearProbeCache();
+  const result = await probeAllTiers(config, { force: input.force === true });
   return {
     unavailable: Array.from(result.unavailable),
     results: result.results,
@@ -156,6 +256,7 @@ export async function handleProbeTool(input: ProbeToolInput) {
 }
 
 export async function handleDoctorTool(input: { config_path?: string }) {
+  clearProbeCache();
   return runDoctor(input.config_path);
 }
 

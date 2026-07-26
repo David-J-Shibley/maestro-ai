@@ -20,6 +20,7 @@
       ".env"
     ],
     "max_tier": "local_strong",
+    "detect_secrets": true,
     "reason": "Privacy policy: sensitive content stays on localhost"
   },
   "sensitive_code_local_only": {

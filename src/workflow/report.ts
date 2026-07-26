@@ -47,6 +47,7 @@ export function formatExecutionReport(
         : s.evaluation?.reason ?? s.error ?? "failed",
   }));
 
+  const skippedValidation = validation.checks.find((c) => c.name === "tool_validation_skipped");
   const markdown = [
     "Maestro Execution Report",
     "═".repeat(40),
@@ -68,6 +69,7 @@ export function formatExecutionReport(
     ),
     "",
     escalations.length ? `Escalations:\n${escalations.map((e) => `  • ${e}`).join("\n")}\n` : "",
+    skippedValidation?.reason ? `Note: ${skippedValidation.reason}\n` : "",
     `Final result: ${finalStatus === "passed" ? "Passed" : finalStatus === "partial" ? "Partial" : "Failed"}.`,
     "",
     `Total latency: ${totalLatencyMs}ms`,

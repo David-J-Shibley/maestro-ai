@@ -178,6 +178,8 @@ export interface RunWorkflowInput {
   mode?: RoutingMode;
   workflow?: WorkflowRequest;
   goal?: string;
+  /** True when caller provided runTests/runBuild hooks — enables implement-test-fix under auto */
+  hasValidationHooks?: boolean;
   overrides?: import("../types.js").RouterOverrides & {
     dryRunWorkflow?: boolean;
   };

@@ -7,6 +7,7 @@ import {
   probeToolInputSchema,
   routeToolInputSchema,
   statsToolInputSchema,
+  workflowToolInputSchema,
 } from "./schemas.js";
 import {
   handleAnalyzeTool,
@@ -16,6 +17,7 @@ import {
   handleProbeTool,
   handleRouteTool,
   handleStatsTool,
+  handleWorkflowTool,
 } from "./tools.js";
 
 import { PACKAGE_VERSION } from "../version.js";
@@ -37,7 +39,7 @@ export function createMaestroMcpServer(): McpServer {
     {
       title: "Maestro Route",
       description:
-        "Analyze a task and return full routing report with human-readable explanation (tier, analysis, debug, probe, why[]). Pass the literal user task in `prompt`.",
+        "Analyze a task and return routing decision + explanation. Compact by default; pass debug:true for full probe/debug. Pass the literal user task in `prompt`.",
       inputSchema: routeToolInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -54,7 +56,7 @@ export function createMaestroMcpServer(): McpServer {
     {
       title: "Maestro Ask",
       description:
-        "Route and execute an LLM call. Response includes full routing report and explanation.markdown. Pass literal task text in `prompt`.",
+        "Route and execute an LLM call (or workflow if `workflow` is set). Compact routing report by default; pass debug:true for full details.",
       inputSchema: askToolInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -67,10 +69,28 @@ export function createMaestroMcpServer(): McpServer {
   );
 
   server.registerTool(
+    "maestro_workflow",
+    {
+      title: "Maestro Workflow",
+      description:
+        "Run multi-step workflow orchestration (auto, critique, implement-test-fix, parallel-synthesis, plan-execute-validate, extract). Pass dry_run_workflow:true to preview the plan.",
+      inputSchema: workflowToolInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => textResult(await handleWorkflowTool(input))
+  );
+
+  server.registerTool(
     "maestro_probe",
     {
       title: "Maestro Probe",
-      description: "Health-check each tier primary and fallback endpoints.",
+      description:
+        "Health-check each tier primary and fallback endpoints (cached ~30s; pass force:true to refresh).",
       inputSchema: probeToolInputSchema,
       annotations: {
         readOnlyHint: true,

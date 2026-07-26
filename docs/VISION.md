@@ -102,6 +102,14 @@ Goal → Planner → Workflow DAG → Step-level routing → Validate → Synthe
 - Per-step routing, parallel execution, dependency context, failure recovery
 - Workflow execution reports and workflow telemetry records
 
+### v1.1 — Transparent Proxy + MCP Workflows ✅
+
+Harnesses can point their API base URL at Maestro instead of (or in addition to) MCP tool calls:
+
+- `maestro proxy` — OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`
+- Claude Code: `ANTHROPIC_BASE_URL` root only (no trailing `/v1`); optional `--max-tier` to stay off Bedrock
+- `maestro_workflow` MCP tool, probe TTL cache, routing golden set, stronger secret-pattern privacy
+
 ### v2.0 — Self-Learning
 
 Telemetry becomes training data:

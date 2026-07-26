@@ -36,18 +36,20 @@ maestro doctor     # verify your backends are reachable
 src/
   adapters/      thin wrappers for harness integrations (Benchy, Vercel AI, Claude Code)
   analyzer/      task-analyzer.ts — classifies prompt → task type / difficulty / risk
-  config/        config loading, package paths, tier config
+  config/        config loading, package paths, tier config, policy
   doctor/        infrastructure diagnostics (maestro doctor)
   evaluator/     response evaluator (non_empty, no_refusal, retry/escalation signals)
   init/          `maestro init` setup
   mcp/           MCP server, tools, schemas
-  provider/      OpenAI-compatible client, probing, streaming, content extraction
+  provider/      OpenAI-compatible client, probing (TTL cache), streaming
+  proxy/         transparent OpenAI + Anthropic HTTP proxy (`maestro proxy`)
   router/        model-router.ts — tier selection
-  routing/       budget, fallback, experiments, learned routing, reporting
-  telemetry/     logger.ts (jsonl), stats.ts
+  routing/       budget, guardrails, modes, learned routing, reporting
+  telemetry/     logger.ts (jsonl), stats.ts, analysis.ts
+  workflow/      planner, DAG executor, patterns, validation, reports
   cli.ts         CLI entry (`maestro`)
 config/          bundled config profiles + LiteLLM starter
-tests/           vitest suite
+tests/           vitest suite (+ fixtures/routing-golden.json)
 ```
 
 ## Adding a new harness adapter

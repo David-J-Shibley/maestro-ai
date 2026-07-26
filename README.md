@@ -2,6 +2,8 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
+**v1.1** adds a transparent OpenAI + Anthropic proxy (`maestro proxy`) so Cursor and Claude Code can point their API base URL at Maestro, plus MCP workflows, probe caching, and stronger secret-pattern privacy.
+
 ## Quick start (new machine)
 
 ```bash
@@ -103,7 +105,8 @@ claude mcp add maestro-ai -- node <path-to>/dist/mcp-server.js
 | Tool | Purpose |
 |------|---------|
 | `maestro_route` | Analyze task → return tier/model (no LLM call). **Always** includes `analysis`, `debug`, `probe`, `fallback_reason`. |
-| `maestro_ask` | Route + execute LLM call with auto-escalation. Response includes full `routing` report. |
+| `maestro_ask` | Route + execute LLM call (optional `workflow`) with routing report |
+| `maestro_workflow` | Multi-step orchestration (auto / critique / implement-test-fix / …) |
 | `maestro_probe` | Health-check each tier primary and fallback endpoints |
 | `maestro_doctor` | Infrastructure diagnostics (process, port, `/v1/models`, env vars) |
 | `maestro_stats` | Telemetry summary — tier mix, escalation rate, latency, cost (`insights: true` for routing analysis) |
@@ -271,7 +274,46 @@ maestro route "<task>" --debug
 maestro doctor
 maestro stats --last 50
 maestro analyze
+maestro proxy --port 4100 --max-tier hosted_oss
 ```
+
+### Transparent proxy (v1.1+)
+
+Point Cursor or Claude Code at Maestro instead of calling MCP tools for every subtask. Maestro still routes underneath.
+
+```bash
+node dist/cli.js proxy --port 4100 --max-tier hosted_oss --prefer-local
+# or after npm link / global install:
+maestro proxy --port 4100 --max-tier hosted_oss --prefer-local
+```
+
+| Client | Base URL | Notes |
+|--------|----------|--------|
+| Cursor / OpenAI SDK | `http://127.0.0.1:4100/v1` | `POST /v1/chat/completions` |
+| Claude Code | `http://127.0.0.1:4100` | **No `/v1`** — Claude appends `/v1/messages` |
+
+**Claude Code** (`--settings` file or env):
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "false",
+    "ANTHROPIC_BASE_URL": "http://localhost:4100",
+    "ANTHROPIC_AUTH_TOKEN": "maestro",
+    "ANTHROPIC_MODEL": "maestro"
+  }
+}
+```
+
+```bash
+claude --settings ~/claude-featherless-settings.json
+```
+
+Tips:
+
+- Cap with `--max-tier hosted_oss` (or `local_strong`) so tool-heavy Claude Code prompts don’t escalate to Bedrock.
+- The proxy **echoes your requested model id** (clients won’t reject `glm` / `maestro`); real model is in `maestro.routed_model`.
+- Streaming is a single SSE burst (OpenAI or Anthropic event shapes). Request logs go to stderr as `[maestro-proxy] …`.
 
 ## Programmatic API
 

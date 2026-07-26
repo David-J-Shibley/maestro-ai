@@ -7,20 +7,32 @@ describe("MCP route tool", () => {
       prompt: "make me a html page that demonstrates what you can do",
     });
     expect(result.tier).toBe("local_fast");
-    expect(result.analysis.taskType).toBe("code_edit");
+    expect(
+      "analysis" in result
+        ? (result as { analysis: { taskType: string } }).analysis.taskType
+        : undefined
+    ).toBeTruthy();
   });
 
-  it("returns full routing report with debug, probe, and explanation", async () => {
-    const result = await handleRouteTool({
+  it("returns compact report by default and full report with debug", async () => {
+    const compact = await handleRouteTool({
       prompt: "Summarize this paragraph in two sentences.",
     });
-    expect(result.tier).toBeTruthy();
-    expect(result.analysis).toBeTruthy();
-    expect(result.debug.length).toBeGreaterThan(0);
-    expect(result.probe).toBeTruthy();
-    expect(result.explanation).toBeTruthy();
-    expect(result.explanation.why.length).toBeGreaterThan(0);
-    expect(result.explanation.markdown).toContain("Maestro Decision");
+    expect(compact.tier).toBeTruthy();
+    expect(compact.explanation).toBeTruthy();
+    expect((compact as { debug?: unknown }).debug).toBeUndefined();
+    expect((compact as { probe?: unknown }).probe).toBeUndefined();
+
+    const full = await handleRouteTool({
+      prompt: "Summarize this paragraph in two sentences.",
+      debug: true,
+    });
+    expect(full.tier).toBeTruthy();
+    expect(full.analysis).toBeTruthy();
+    expect(full.debug.length).toBeGreaterThan(0);
+    expect(full.explanation).toBeTruthy();
+    expect(full.explanation.why.length).toBeGreaterThan(0);
+    expect(full.explanation.markdown).toContain("Maestro Decision");
   });
 
   it("routes model-router demo meta prompts to local_fast", async () => {
@@ -34,19 +46,21 @@ describe("MCP route tool", () => {
     expect(result.analysis.difficulty).toBe("easy");
   });
 
-  it("routes architecture tasks to premium", async () => {
+  it("routes architecture tasks to premium (intended tier, no live probe)", async () => {
     const result = await handleRouteTool({
       prompt: "Design the architecture for a distributed task queue.",
+      debug: true,
     });
 
     expect(result.tier).toBe("premium");
     expect(result.analysis.taskType).toBe("architecture");
   });
 
-  it("honors premium_only override", async () => {
+  it("honors premium_only override (intended tier, no live probe)", async () => {
     const result = await handleRouteTool({
       prompt: "Format this list.",
       premium_only: true,
+      debug: true,
     });
 
     expect(result.tier).toBe("premium");

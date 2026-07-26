@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-26
+
+### Added
+- **Transparent OpenAI + Anthropic proxy** — `maestro proxy [--port 4100]` serves:
+  - OpenAI: `POST /v1/chat/completions` (Cursor / OpenAI SDKs; base URL `http://127.0.0.1:4100/v1`)
+  - Anthropic: `POST /v1/messages` (Claude Code; set `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` **without** `/v1`)
+- **Proxy `--max-tier` / `--prefer-local`** — cap escalation (e.g. `--max-tier hosted_oss`) so Claude Code’s large tool prompts don’t hit Bedrock when AWS SSO is down.
+- **Client model echo** — completions return the id the client requested (`maestro`, `glm`, `claude-sonnet-4-6`, …); real routed model is in `maestro.routed_model`.
+- **Anthropic + OpenAI streaming** — single-burst SSE in the shape each client expects.
+- **`maestro_workflow` MCP tool** — run multi-step workflows from Cursor; `maestro_ask` also accepts `workflow` / `dry_run_workflow`.
+- **Probe TTL cache** (`probeCacheTtlMs`, default 30s) — fewer endpoint hits on frequent subtasks; `force:true` on `maestro_probe` / doctor refreshes.
+- **Routing golden set** (`tests/fixtures/routing-golden.json`) — CI regression for analyzer/router accuracy without live probes.
+- **Secret-pattern privacy** — AWS keys, `sk-`, GitHub tokens, private key PEM, DB URLs, Bearer tokens cap to local tiers (`detect_secrets`).
+
+### Changed
+- **Dry-run route skips live probe by default** — returns *intended* tier; opt in with `probe:true`, `debug:true`, or `routing.probeOnDryRun`.
+- **Compact MCP reports by default** — full debug/probe only when `debug:true`.
+- **Quieter auto workflows** — simple `code_edit` uses single-shot unless tests/build are mentioned, task is hard/high-risk, quality=best, or validation hooks are provided.
+- **Deep-merge session overrides** — nested `session` fields no longer clobber each other.
+- Workflow reports note when tool validation was skipped (no `runTests`/`runBuild` hooks).
+
+### Fixed
+- MCP premium/architecture route tests no longer depend on live LiteLLM availability.
+- Proxy no longer dies silently on client disconnect / unhandled write errors (request logging + process guards on Node 22+).
+
+[1.1.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.1.0
+
 ## [1.0.1] - 2026-07-16
 
 ### Fixed

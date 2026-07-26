@@ -46,8 +46,11 @@ export function buildRoutingReport(input: {
   contextTokens?: number;
   config?: RouterConfig;
   callOutcome?: CallOutcome;
+  /** When false, omit verbose debug/probe arrays (MCP default). */
+  verbose?: boolean;
 }): RoutingReport {
   const { routing, analysis, probe, contextTokens, config, callOutcome } = input;
+  const verbose = input.verbose !== false;
 
   const explanationRouting = callOutcome?.initialRouting ?? routing;
 
@@ -111,17 +114,50 @@ export function buildRoutingReport(input: {
     endpoint_source: routing.endpointSource,
     budget: routing.budget,
     analysis,
-    debug: routing.debug ?? [],
-    probe: probe
+    debug: verbose ? routing.debug ?? [] : (routing.debug ?? []).slice(0, 3),
+    probe: verbose && probe
       ? {
           unavailable_tiers: Array.from(probe.unavailable),
           results: probe.results,
         }
-      : null,
+      : probe
+        ? {
+            unavailable_tiers: Array.from(probe.unavailable),
+            results: [],
+          }
+        : null,
     explanation,
     mode: routing.mode,
     guardrails: routing.guardrails,
     telemetry_recommendation: telemetryRecommendation,
+  };
+}
+
+/** Compact MCP payload — keep explanation + core fields, drop heavy probe/debug. */
+export function compactRoutingReport(report: RoutingReport): Record<string, unknown> {
+  return {
+    tier: report.tier,
+    model: report.model,
+    provider: report.provider,
+    reason: report.reason,
+    requested_tier: report.requested_tier,
+    fallback_tier: report.fallback_tier,
+    fallback_reason: report.fallback_reason,
+    endpoint_source: report.endpoint_source,
+    mode: report.mode,
+    analysis: {
+      taskType: report.analysis.taskType,
+      difficulty: report.analysis.difficulty,
+      riskLevel: report.analysis.riskLevel,
+      confidence: report.analysis.confidence,
+    },
+    explanation: {
+      markdown: report.explanation.markdown,
+      why: report.explanation.why,
+    },
+    guardrails: report.guardrails,
+    budget: report.budget,
+    unavailable_tiers: report.probe?.unavailable_tiers ?? [],
   };
 }
 

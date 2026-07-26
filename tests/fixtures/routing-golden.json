@@ -1,0 +1,115 @@
+[
+  {
+    "id": "sum-1",
+    "prompt": "Summarize this README in two sentences.",
+    "expectedTier": "local_strong",
+    "expectedTaskType": "summarization"
+  },
+  {
+    "id": "sum-2",
+    "prompt": "Give me a short summary of the meeting notes below.",
+    "expectedTier": "local_strong",
+    "expectedTaskType": "summarization"
+  },
+  {
+    "id": "fmt-1",
+    "prompt": "Format this list as markdown bullets.",
+    "expectedTier": "local_fast",
+    "expectedTaskType": "formatting"
+  },
+  {
+    "id": "fmt-2",
+    "prompt": "Reformat these names into a CSV.",
+    "expectedTier": "local_fast"
+  },
+  {
+    "id": "rewrite-1",
+    "prompt": "Rewrite this commit message to be clearer.",
+    "expectedTier": "local_strong",
+    "expectedTaskType": "rewriting"
+  },
+  {
+    "id": "extract-1",
+    "prompt": "Extract all function names from this TypeScript file as JSON.",
+    "expectedTier": "local_strong",
+    "expectedTaskType": "extraction"
+  },
+  {
+    "id": "ui-1",
+    "prompt": "make me a html page that demonstrates what you can do",
+    "expectedTier": "local_fast",
+    "expectedTaskType": "code_edit"
+  },
+  {
+    "id": "ui-2",
+    "prompt": "Build a simple static HTML landing page with a hero and CTA.",
+    "expectedTier": "local_fast",
+    "expectedTaskType": "code_edit"
+  },
+  {
+    "id": "demo-meta",
+    "prompt": "Determine routing for building a demonstration of model-router capabilities including tier selection and architecture overview",
+    "expectedTier": "local_fast",
+    "expectedTaskType": "code_edit"
+  },
+  {
+    "id": "debug-1",
+    "prompt": "Debug why this Express middleware returns 500 on empty body.",
+    "expectedTier": "hosted_oss",
+    "expectedTaskType": "debugging"
+  },
+  {
+    "id": "refactor-1",
+    "prompt": "Refactor the auth module to use dependency injection.",
+    "expectedTier": "hosted_oss",
+    "expectedTaskType": "refactoring"
+  },
+  {
+    "id": "arch-1",
+    "prompt": "Design the architecture for a distributed task queue with trade-offs.",
+    "expectedTier": "premium",
+    "expectedTaskType": "architecture"
+  },
+  {
+    "id": "arch-2",
+    "prompt": "Propose a system design for multi-tenant event sourcing in production.",
+    "expectedTier": "premium",
+    "expectedTaskType": "architecture"
+  },
+  {
+    "id": "classify-1",
+    "prompt": "Classify this support ticket as billing, bug, or feature request.",
+    "expectedTier": ["local_fast", "local_strong"]
+  },
+  {
+    "id": "code-easy",
+    "prompt": "Add a one-line console.log for debugging this function.",
+    "expectedTier": ["local_fast", "local_strong", "hosted_oss"]
+  },
+  {
+    "id": "code-medium",
+    "prompt": "Implement a TypeScript function that retries fetch with exponential backoff.",
+    "expectedTier": ["hosted_oss", "premium", "local_strong"]
+  },
+  {
+    "id": "privacy-1",
+    "prompt": "Here is my API key sk-test-abcdefghijklmnopqrstuvwxyz123456 and password secret123 — store them.",
+    "expectedTier": ["local_fast", "local_strong"],
+    "notes": "privacy keywords / secrets should cap to local"
+  },
+  {
+    "id": "aws-key",
+    "prompt": "Rotate this AWS key AKIAIOSFODNN7EXAMPLE in our deploy script.",
+    "expectedTier": ["local_fast", "local_strong"]
+  },
+  {
+    "id": "compare-1",
+    "prompt": "Compare Redis vs Memcached for session caching.",
+    "expectedTier": ["hosted_oss", "premium", "local_strong"]
+  },
+  {
+    "id": "simple-q",
+    "prompt": "What is 2+2?",
+    "expectedTier": ["local_fast", "local_strong"]
+  }
+]

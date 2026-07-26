@@ -16,6 +16,17 @@ export type { PrivacyPolicyRule, RoutingPolicy, SensitiveCodePolicy };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/** Common credential / secret shapes — used when privacy.detect_secrets is enabled (default). */
+export const SECRET_PATTERNS: RegExp[] = [
+  /\b(AKIA|ASIA)[A-Z0-9]{16}\b/, // AWS access key id
+  /\bsk-(?:live|test|proj)-[A-Za-z0-9_-]{20,}\b/,
+  /\bghp_[A-Za-z0-9]{36}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+  /\b-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /\b(?:postgres|mysql|mongodb):\/\/[^\s:]+:[^\s@]+@/i,
+  /\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/,
+];
+
 export interface PolicyApplication {
   tier: ModelTier;
   notes: string[];
@@ -71,13 +82,24 @@ export function applyRoutingPolicy(
     result = taskOverride;
   }
 
-  if (policy.privacy?.keywords?.length) {
-    const blob = [promptText ?? "", ...analysis.signals].join(" ").toLowerCase();
-    const hit = policy.privacy.keywords.some((kw) => blob.includes(kw.toLowerCase()));
-    if (hit) {
-      const capped = capTier(result, policy.privacy.max_tier);
+  if (policy.privacy?.keywords?.length || policy.privacy?.detect_secrets !== false) {
+    const blob = [promptText ?? "", ...analysis.signals].join(" ");
+    const blobLower = blob.toLowerCase();
+    const keywordHit = (policy.privacy?.keywords ?? []).some((kw) =>
+      blobLower.includes(kw.toLowerCase())
+    );
+    const secretHit =
+      policy.privacy?.detect_secrets !== false && SECRET_PATTERNS.some((re) => re.test(blob));
+    if (keywordHit || secretHit) {
+      const maxTier = policy.privacy?.max_tier ?? "local_strong";
+      const capped = capTier(result, maxTier);
       if (capped !== result) {
-        notes.push(policy.privacy.reason ?? `privacy keywords → max ${policy.privacy.max_tier}`);
+        notes.push(
+          policy.privacy?.reason ??
+            (secretHit
+              ? `secret/credential pattern → max ${maxTier}`
+              : `privacy keywords → max ${maxTier}`)
+        );
         result = capped;
       }
     }

@@ -10,7 +10,9 @@ import { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
 import type { WorkflowRequest } from "./workflow/types.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
+import { startProxyServer } from "./proxy/server.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
+import { TIER_ORDER } from "./types.js";
 import { formatProbeSummary } from "./routing/probe-summary.js";
 import { isRoutingMode } from "./routing/modes.js";
 import { PACKAGE_VERSION } from "./version.js";
@@ -265,6 +267,40 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "proxy") {
+      const port =
+        typeof flags.port === "string" ? parseInt(flags.port, 10) : 4100;
+      const host =
+        typeof flags.host === "string" ? flags.host : "127.0.0.1";
+      const mode =
+        typeof flags.mode === "string" && isRoutingMode(flags.mode)
+          ? flags.mode
+          : undefined;
+      const maxTierRaw =
+        typeof flags["max-tier"] === "string" ? flags["max-tier"] : undefined;
+      const maxTier = maxTierRaw && TIER_ORDER.includes(maxTierRaw as ModelTier)
+        ? (maxTierRaw as ModelTier)
+        : undefined;
+      const { host: h, port: p } = await startProxyServer({
+        port,
+        host,
+        configPath: typeof flags.config === "string" ? flags.config : undefined,
+        mode,
+        maxTier,
+        alwaysPreferLocal: Boolean(flags["prefer-local"]),
+        sessionId:
+          typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
+      });
+      console.log(`Maestro proxy listening on http://${h}:${p}`);
+      console.log(`OpenAI  (Cursor):  base URL http://${h}:${p}/v1`);
+      console.log(`Anthropic (Claude Code): ANTHROPIC_BASE_URL=http://${h}:${p}  (no /v1)`);
+      if (maxTier) console.log(`Max tier capped at: ${maxTier}`);
+      console.log("Model id can stay sonnet/maestro/etc. — Maestro routes underneath.");
+      console.log("Ctrl+C to stop.");
+      await new Promise(() => {});
+      return;
+    }
+
     if (command === "probe") {
       const { probeAllTiers } = await import("./provider/probe.js");
       const config = loadConfig(typeof flags.config === "string" ? flags.config : undefined);
@@ -421,6 +457,7 @@ Usage:
   maestro stats [--last N]            Telemetry summary (default 50)
   maestro analyze [--all]             Telemetry routing insights & recommendations
   maestro insights                    Alias for analyze
+  maestro proxy [--port 4100] [--max-tier hosted_oss]  OpenAI + Anthropic proxy
   maestro version                     Print package version
 
 Profiles (for init):
@@ -445,6 +482,8 @@ Flags:
   --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
   --workflow <pattern>     Workflow orchestration (auto|critique|implement-test-fix|parallel-synthesis|...)
   --dry-run-workflow       Preview workflow plan without executing
+  --port <n>               Proxy listen port (default 4100)
+  --host <addr>            Proxy bind address (default 127.0.0.1)
   --quality <fast|balanced|best>
   --risk <low|medium|high>
   --schema <json>          Response JSON schema object
