@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-16
+
+### Fixed
+- **Send `max_tokens` on every request** (default 8192). Previously output length was governed by the provider default, which silently truncated generations at ~4096 tokens. Applies to both the non-streaming and streaming call paths.
+- **Retry truncation on the same tier with a larger `max_tokens`** instead of escalating. `finish_reason=length` is now detected even when partial content is present, and retried on the same tier with a doubled `max_tokens` (capped at 32768, max 2 retries) rather than escalating to a tier that truncates the same way. Truncation retries run even when escalation is disabled; normal same-tier retries stay gated on `enableEscalation`.
+- **Scope refusal detection to the opening of the response.** Refusal patterns now match against the first 150 chars and are gated on a 500-char length guard, so legitimate long output containing phrases like "I can't" is no longer flagged as a refusal.
+
+[1.0.1]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.0.1
+
 ## [1.0.0] - 2026-07-12
 
 ### Added
