@@ -110,6 +110,14 @@ Harnesses can point their API base URL at Maestro instead of (or in addition to)
 - Claude Code: `ANTHROPIC_BASE_URL` root only (no trailing `/v1`); optional `--max-tier` to stay off Bedrock
 - `maestro_workflow` MCP tool, probe TTL cache, routing golden set, stronger secret-pattern privacy
 
+### v1.2 — Live streaming + tool passthrough ✅
+
+Claude Code agent loops work through the proxy:
+
+- Native Anthropic Messages passthrough (tools / tool_use / tool_result) via LiteLLM
+- Live upstream token streaming + idle keepalives
+- Large tool catalogs route toward longer-context tiers; truncated upstream streams surface clear errors
+
 ### v2.0 — Self-Learning
 
 Telemetry becomes training data:

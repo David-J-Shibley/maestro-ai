@@ -297,15 +297,15 @@ maestro doctor
 
 Merge `~/.maestro-ai/mcp-config.json` into Cursor MCP settings. In chat, the agent can call `maestro_ask` for cheap subtasks while keeping hard work in its own session.
 
-### Transparent proxy (v1.1)
+### Transparent proxy (v1.1+)
 
 For whole-session routing without MCP tool calls, run:
 
 ```bash
-maestro proxy --port 4100 --max-tier hosted_oss --prefer-local
+maestro proxy --port 4100 --prefer-local
 ```
 
-Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock.
+Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock. From **v1.2**, Anthropic tools pass through natively and tokens stream live.
 
 ## Lessons learned
 
@@ -317,7 +317,7 @@ Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v
 
 ## What's next
 
-Feedback-driven stats, premium pool rotation, and eventually learned routing once telemetry has enough rows. Transparent proxy coverage for more harnesses (tool-calling passthrough, true token streaming) is the near-term follow-on to v1.1.
+Feedback-driven stats, premium pool rotation, and eventually learned routing once telemetry has enough rows.
 
 ---
 
