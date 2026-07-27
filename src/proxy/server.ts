@@ -8,8 +8,23 @@
  */
 import { loadConfig } from "../config/load-config.js";
 import { getPrimaryEndpoint } from "../config/tier-config.js";
-import { dryRunRoute, routedLLMCall } from "../routed-llm-call.js";
-import { chatCompletionStream } from "../provider/stream.js";
+import { dryRunRoute } from "../routed-llm-call.js";
+import { chatCompletionStream, chatCompletionWithTools } from "../provider/stream.js";
+import type { StreamChunk, StreamToolCallDelta } from "../provider/stream.js";
+import {
+  anthropicMessagesCompletion,
+  anthropicMessagesStream,
+  extractStopReason,
+  extractTextDeltaChars,
+  rewriteAnthropicSseModel,
+  supportsAnthropicMessages,
+} from "../provider/anthropic-messages.js";
+import {
+  anthropicToChatMessages,
+  anthropicToolsToOpenAi,
+  normalizeAnthropicSystem,
+  type AnthropicMessage,
+} from "./anthropic-openai.js";
 import type {
   ChatMessage,
   ModelTier,
@@ -59,15 +74,6 @@ const CLIENT_MODEL_ALIASES = [
   "glm",
   "nemotron",
 ];
-
-type AnthropicContentBlock =
-  | { type: "text"; text: string }
-  | { type: string; [k: string]: unknown };
-
-type AnthropicMessage = {
-  role: "user" | "assistant";
-  content: string | AnthropicContentBlock[];
-};
 
 function log(...args: unknown[]): void {
   console.error("[maestro-proxy]", ...args);
@@ -134,47 +140,6 @@ function listModelIds(config: RouterConfig): string[] {
     if (tc.fallback?.model) fromConfig.add(tc.fallback.model);
   }
   return [...new Set([...CLIENT_MODEL_ALIASES, ...fromConfig])];
-}
-
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return content == null ? "" : String(content);
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const b = block as AnthropicContentBlock;
-    if (b.type === "text" && typeof b.text === "string") parts.push(b.text);
-    else if (b.type === "tool_use") {
-      parts.push(`[tool_use ${String(b.name ?? "")} ${JSON.stringify(b.input ?? {})}]`);
-    } else if (b.type === "tool_result") {
-      parts.push(`[tool_result ${contentToText(b.content)}]`);
-    } else {
-      const maybe = b as unknown as { content?: unknown };
-      if (typeof maybe.content === "string") parts.push(maybe.content);
-    }
-  }
-  return parts.join("\n");
-}
-
-function anthropicToChatMessages(
-  messages: AnthropicMessage[],
-  system?: unknown
-): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  if (system != null && system !== "") {
-    const sys =
-      Array.isArray(system)
-        ? contentToText(system)
-        : typeof system === "string"
-          ? system
-          : contentToText(system);
-    if (sys) out.push({ role: "system", content: sys });
-  }
-  for (const m of messages) {
-    const role = m.role === "assistant" ? "assistant" : "user";
-    out.push({ role, content: contentToText(m.content) });
-  }
-  return out;
 }
 
 function resolveMode(
@@ -358,58 +323,174 @@ function writeAnthropicEvent(res: ServerResponse, event: string, data: unknown):
   return safeWrite(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function startAnthropicContentBlock(res: ServerResponse): void {
-  writeAnthropicEvent(res, "content_block_start", {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "" },
-  });
-}
+/** Converts OpenAI stream chunks into Anthropic Messages SSE (text + tool_use). */
+class AnthropicStreamEmitter {
+  private nextIndex = 0;
+  private textIndex: number | null = null;
+  private textClosed = false;
+  private readonly tools = new Map<
+    number,
+    {
+      anthropicIndex: number;
+      id: string;
+      name: string;
+      started: boolean;
+      pendingArgs: string;
+    }
+  >();
+  private fullText = "";
+  private sawToolCalls = false;
+  private finishReason: string | null = null;
 
-function writeAnthropicTextDelta(res: ServerResponse, text: string): void {
-  if (!text) return;
-  writeAnthropicEvent(res, "content_block_delta", {
-    type: "content_block_delta",
-    index: 0,
-    delta: { type: "text_delta", text },
-  });
-}
+  constructor(private readonly res: ServerResponse) {}
 
-function endAnthropicMessage(res: ServerResponse, outputTokens: number): void {
-  writeAnthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: 0 });
-  writeAnthropicEvent(res, "message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: outputTokens },
-  });
-  writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
-  try {
-    res.end();
-  } catch {
-    /* ignore */
-  }
-}
+  handleChunk(chunk: StreamChunk): void {
+    if (chunk.finishReason) this.finishReason = chunk.finishReason;
 
-/** Fallback when upstream streaming is unavailable — dump full text as deltas. */
-function finishAnthropicSse(
-  res: ServerResponse,
-  opts: {
-    content: string;
-    outputTokens: number;
-  }
-): void {
-  if (!canWrite(res)) return;
-  startAnthropicContentBlock(res);
-  const text = opts.content;
-  const chunkSize = 48;
-  if (!text) {
-    writeAnthropicTextDelta(res, "");
-  } else {
-    for (let i = 0; i < text.length; i += chunkSize) {
-      writeAnthropicTextDelta(res, text.slice(i, i + chunkSize));
+    if (chunk.content) {
+      this.ensureTextOpen();
+      this.fullText += chunk.content;
+      writeAnthropicEvent(this.res, "content_block_delta", {
+        type: "content_block_delta",
+        index: this.textIndex,
+        delta: { type: "text_delta", text: chunk.content },
+      });
+    }
+
+    if (chunk.toolCallDeltas?.length) {
+      this.closeTextIfOpen();
+      for (const delta of chunk.toolCallDeltas) {
+        this.handleToolDelta(delta);
+      }
     }
   }
-  endAnthropicMessage(res, opts.outputTokens);
+
+  private ensureTextOpen(): void {
+    if (this.textIndex != null) return;
+    this.textIndex = this.nextIndex++;
+    writeAnthropicEvent(this.res, "content_block_start", {
+      type: "content_block_start",
+      index: this.textIndex,
+      content_block: { type: "text", text: "" },
+    });
+  }
+
+  private closeTextIfOpen(): void {
+    if (this.textIndex == null || this.textClosed) return;
+    writeAnthropicEvent(this.res, "content_block_stop", {
+      type: "content_block_stop",
+      index: this.textIndex,
+    });
+    this.textClosed = true;
+  }
+
+  private startTool(state: {
+    anthropicIndex: number;
+    id: string;
+    name: string;
+    started: boolean;
+    pendingArgs: string;
+  }): void {
+    if (state.started) return;
+    writeAnthropicEvent(this.res, "content_block_start", {
+      type: "content_block_start",
+      index: state.anthropicIndex,
+      content_block: {
+        type: "tool_use",
+        id: state.id,
+        name: state.name || "tool",
+        input: {},
+      },
+    });
+    state.started = true;
+    if (state.pendingArgs) {
+      writeAnthropicEvent(this.res, "content_block_delta", {
+        type: "content_block_delta",
+        index: state.anthropicIndex,
+        delta: { type: "input_json_delta", partial_json: state.pendingArgs },
+      });
+      state.pendingArgs = "";
+    }
+  }
+
+  private handleToolDelta(delta: StreamToolCallDelta): void {
+    this.sawToolCalls = true;
+    let state = this.tools.get(delta.index);
+    if (!state) {
+      state = {
+        anthropicIndex: this.nextIndex++,
+        id: delta.id ?? `toolu_${Math.random().toString(36).slice(2, 12)}`,
+        name: delta.function?.name ?? "",
+        started: false,
+        pendingArgs: "",
+      };
+      this.tools.set(delta.index, state);
+    } else {
+      if (delta.id) state.id = delta.id;
+      if (delta.function?.name) state.name = delta.function.name;
+    }
+
+    const argPart = delta.function?.arguments;
+    if (argPart) {
+      if (state.started) {
+        writeAnthropicEvent(this.res, "content_block_delta", {
+          type: "content_block_delta",
+          index: state.anthropicIndex,
+          delta: { type: "input_json_delta", partial_json: argPart },
+        });
+      } else {
+        state.pendingArgs += argPart;
+      }
+    }
+
+    if (!state.started && state.name) {
+      this.startTool(state);
+    }
+  }
+
+  finish(): { outputTokens: number; stopReason: string } {
+    this.closeTextIfOpen();
+    for (const state of this.tools.values()) {
+      this.startTool(state);
+      writeAnthropicEvent(this.res, "content_block_stop", {
+        type: "content_block_stop",
+        index: state.anthropicIndex,
+      });
+    }
+
+    // Empty assistant reply — still need a text block for some clients
+    if (this.textIndex == null && !this.sawToolCalls) {
+      writeAnthropicEvent(this.res, "content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      });
+      writeAnthropicEvent(this.res, "content_block_stop", {
+        type: "content_block_stop",
+        index: 0,
+      });
+    }
+
+    const stopReason =
+      this.sawToolCalls || this.finishReason === "tool_calls" ? "tool_use" : "end_turn";
+    const outputTokens = Math.max(1, Math.ceil(this.fullText.length / 4));
+    writeAnthropicEvent(this.res, "message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: { output_tokens: outputTokens },
+    });
+    writeAnthropicEvent(this.res, "message_stop", { type: "message_stop" });
+    try {
+      this.res.end();
+    } catch {
+      /* ignore */
+    }
+    return { outputTokens, stopReason };
+  }
+
+  get textLength(): number {
+    return this.fullText.length;
+  }
 }
 
 function writeAnthropicSseError(res: ServerResponse, message: string): void {
@@ -439,28 +520,6 @@ function asText(content: unknown): string {
   return typeof content === "string" ? content : content == null ? "" : String(content);
 }
 
-async function runRouted(
-  messages: ChatMessage[],
-  req: IncomingMessage,
-  options: ProxyServerOptions,
-  config: RouterConfig
-) {
-  const session =
-    options.sessionId || options.maxTier || options.alwaysPreferLocal
-      ? {
-          sessionId: options.sessionId,
-          maxTier: options.maxTier,
-          alwaysPreferLocal: options.alwaysPreferLocal,
-        }
-      : undefined;
-  const overrides: RouterOverrides = {
-    mode: resolveMode(req, options),
-    preferLocal: options.alwaysPreferLocal,
-    session,
-  };
-  return routedLLMCall({ messages, overrides }, { config });
-}
-
 function proxyOverrides(
   req: IncomingMessage,
   options: ProxyServerOptions
@@ -480,11 +539,25 @@ function proxyOverrides(
   };
 }
 
-/** Route once, then stream tokens live from the selected endpoint (no post-buffer). */
+/** Route once, then stream — prefer native Anthropic Messages via LiteLLM. */
 async function streamRoutedAnthropic(opts: {
   res: ServerResponse;
   req: IncomingMessage;
   messages: ChatMessage[];
+  tools?: unknown[];
+  anthropicBody: {
+    messages: AnthropicMessage[];
+    system?: unknown;
+    tools?: unknown[];
+    tool_choice?: unknown;
+    max_tokens?: number;
+    temperature?: number;
+    top_p?: number;
+    top_k?: number;
+    stop_sequences?: unknown;
+    metadata?: unknown;
+  };
+  forwardHeaders?: Record<string, string>;
   options: ProxyServerOptions;
   config: RouterConfig;
   clientModel: string;
@@ -497,6 +570,9 @@ async function streamRoutedAnthropic(opts: {
     res,
     req,
     messages,
+    tools,
+    anthropicBody,
+    forwardHeaders,
     options,
     config,
     clientModel,
@@ -506,72 +582,309 @@ async function streamRoutedAnthropic(opts: {
     verbose,
   } = opts;
 
+  // Route before opening SSE so native upstream can own message_start.
+  const { routing } = await dryRunRoute(
+    { messages, tools, overrides: proxyOverrides(req, options) },
+    { config }
+  );
+
+  if (req.aborted || res.destroyed) {
+    if (verbose) log("client gone after route decision");
+    return;
+  }
+
+  const endpoint = getPrimaryEndpoint(config, routing.tier);
+  const useNative = supportsAnthropicMessages(endpoint);
+
+  if (verbose) {
+    log(
+      `streaming via ${routing.provider}/${routing.model} tier=${routing.tier} ` +
+        `tools=${tools?.length ?? 0} native=${useNative} (decision ${Date.now() - started}ms)`
+    );
+  }
+
+  if (useNative) {
+    await streamAnthropicNative({
+      res,
+      req,
+      endpoint,
+      anthropicBody,
+      forwardHeaders,
+      clientModel,
+      provisionalId,
+      maxTokens,
+      started,
+      verbose,
+      routedModel: routing.model,
+      routedTier: routing.tier,
+    });
+    return;
+  }
+
   beginAnthropicSse(res, { id: provisionalId, model: clientModel });
   let stopHeartbeat = startSseHeartbeat(res, "anthropic", 5_000);
+  stopHeartbeat();
+  stopHeartbeat = () => undefined;
+
+  const emitter = new AnthropicStreamEmitter(res);
+  const abort = new AbortController();
+  const onAbort = () => abort.abort();
+  req.once("aborted", onAbort);
+  res.once("close", onAbort);
 
   try {
-    const { routing } = await dryRunRoute(
-      { messages, overrides: proxyOverrides(req, options) },
-      { config }
-    );
-    stopHeartbeat();
-    stopHeartbeat = () => undefined;
+    for await (const chunk of chatCompletionStream(
+      endpoint,
+      routing.tier,
+      { messages, tools, maxTokens },
+      { signal: abort.signal }
+    )) {
+      if (abort.signal.aborted || !canWrite(res)) break;
+      emitter.handleChunk(chunk);
+    }
+  } finally {
+    req.off("aborted", onAbort);
+    res.off("close", onAbort);
+  }
 
-    if (req.aborted || res.destroyed) {
-      if (verbose) log("client gone after route decision");
+  if (!canWrite(res)) return;
+  const { stopReason } = emitter.finish();
+  if (verbose) {
+    log(
+      `ok ${Date.now() - started}ms streamed=${emitter.textLength}ch ` +
+        `stop=${stopReason} routed=${routing.model} tier=${routing.tier}`
+    );
+  }
+}
+
+async function streamAnthropicNative(opts: {
+  res: ServerResponse;
+  req: IncomingMessage;
+  endpoint: ReturnType<typeof getPrimaryEndpoint>;
+  anthropicBody: {
+    messages: AnthropicMessage[];
+    system?: unknown;
+    tools?: unknown[];
+    tool_choice?: unknown;
+    max_tokens?: number;
+    temperature?: number;
+    top_p?: number;
+    top_k?: number;
+    stop_sequences?: unknown;
+    metadata?: unknown;
+  };
+  forwardHeaders?: Record<string, string>;
+  clientModel: string;
+  provisionalId: string;
+  maxTokens?: number;
+  started: number;
+  verbose: boolean;
+  routedModel: string;
+  routedTier: string;
+}): Promise<void> {
+  const {
+    res,
+    req,
+    endpoint,
+    anthropicBody,
+    forwardHeaders,
+    clientModel,
+    provisionalId,
+    maxTokens,
+    started,
+    verbose,
+    routedModel,
+    routedTier,
+  } = opts;
+
+  if (!canWrite(res) || res.headersSent) return;
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  // Comment keepalives until message_start — Anthropic `ping` before
+  // message_start makes Claude Code report "Stream ended without receiving any events".
+  let stopHeartbeat = startSseHeartbeat(res, "openai", 5_000);
+  const abort = new AbortController();
+  const onClientGone = () => {
+    if (!res.writableEnded) abort.abort();
+  };
+  req.once("aborted", onClientGone);
+  req.once("close", onClientGone);
+
+  let stopReason: string | null = null;
+  let textChars = 0;
+  let sawMessageStart = false;
+  let sawMessageStop = false;
+  let lastEvent: string | null = null;
+  let upstreamError: string | null = null;
+
+  try {
+    const normalized = normalizeAnthropicSystem(
+      anthropicBody.messages,
+      anthropicBody.system
+    );
+    const upstreamReq = {
+      model: endpoint.model,
+      messages: normalized.messages,
+      max_tokens:
+        maxTokens ??
+        (typeof anthropicBody.max_tokens === "number" && anthropicBody.max_tokens > 0
+          ? anthropicBody.max_tokens
+          : 4096),
+      stream: true as const,
+      ...(normalized.system != null ? { system: normalized.system } : {}),
+      ...(anthropicBody.tools ? { tools: anthropicBody.tools } : {}),
+      ...(anthropicBody.tool_choice != null
+        ? { tool_choice: anthropicBody.tool_choice }
+        : {}),
+      ...(anthropicBody.temperature != null
+        ? { temperature: anthropicBody.temperature }
+        : {}),
+      ...(anthropicBody.top_p != null ? { top_p: anthropicBody.top_p } : {}),
+      ...(anthropicBody.top_k != null ? { top_k: anthropicBody.top_k } : {}),
+      ...(anthropicBody.stop_sequences != null
+        ? { stop_sequences: anthropicBody.stop_sequences }
+        : {}),
+      ...(anthropicBody.metadata != null ? { metadata: anthropicBody.metadata } : {}),
+    };
+
+    for await (const ev of anthropicMessagesStream(endpoint, upstreamReq, {
+      signal: abort.signal,
+      headers: forwardHeaders,
+    })) {
+      if (abort.signal.aborted || !canWrite(res)) break;
+      // LiteLLM sometimes emits duplicate message_start frames for OpenAI→Anthropic.
+      if (ev.event === "message_start" && lastEvent === "message_start") {
+        continue;
+      }
+      lastEvent = ev.event;
+      if (ev.event === "message_start" && !sawMessageStart) {
+        stopHeartbeat();
+        stopHeartbeat = () => undefined;
+        sawMessageStart = true;
+      }
+      if (ev.event === "message_stop") sawMessageStop = true;
+      if (ev.event === "error") {
+        const errObj = ev.data as { error?: { message?: string }; message?: string };
+        upstreamError =
+          errObj?.error?.message ?? errObj?.message ?? "upstream error event";
+      }
+      const rewritten = rewriteAnthropicSseModel(ev, clientModel);
+      const sr = extractStopReason(rewritten.data);
+      if (sr) stopReason = sr;
+      textChars += extractTextDeltaChars(rewritten.event, rewritten.data);
+      const frame =
+        rewritten.raw ||
+        `event: ${rewritten.event}\ndata: ${JSON.stringify(rewritten.data)}\n\n`;
+      safeWrite(res, frame);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    upstreamError = message;
+    log("native stream error:", message);
+    if (!sawMessageStart && canWrite(res)) {
+      writeAnthropicEvent(res, "message_start", {
+        type: "message_start",
+        message: {
+          id: provisionalId,
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: clientModel,
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      });
+      writeAnthropicSseError(res, message);
+      return;
+    }
+  } finally {
+    req.off("aborted", onClientGone);
+    req.off("close", onClientGone);
+    stopHeartbeat();
+  }
+
+  if (abort.signal.aborted && !sawMessageStart) {
+    if (canWrite(res)) {
       try {
         res.end();
       } catch {
         /* ignore */
       }
-      return;
     }
+    if (verbose) log("client gone before upstream events");
+    return;
+  }
 
-    if (verbose) {
-      log(
-        `streaming via ${routing.provider}/${routing.model} tier=${routing.tier} ` +
-          `(decision ${Date.now() - started}ms)`
-      );
-    }
+  // LiteLLM often ends after bare message_start when context length is exceeded.
+  if (sawMessageStart && !sawMessageStop && canWrite(res)) {
+    const msg =
+      upstreamError ??
+      `Upstream stream ended early for ${routedModel} (no message_stop). ` +
+        `This usually means the prompt exceeded the model's context limit. ` +
+        `Try --max-tier premium, a shorter session, or fewer tools.`;
+    log("truncated native stream:", msg);
+    writeAnthropicEvent(res, "content_block_start", {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    });
+    writeAnthropicEvent(res, "content_block_stop", {
+      type: "content_block_stop",
+      index: 0,
+    });
+    writeAnthropicEvent(res, "message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: { output_tokens: 0 },
+    });
+    writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
+    writeAnthropicEvent(res, "error", {
+      type: "error",
+      error: { type: "api_error", message: msg },
+    });
+    stopReason = "end_turn";
+  } else if (!sawMessageStart && canWrite(res)) {
+    const msg =
+      upstreamError ??
+      `No events from upstream ${routedModel}. Check LiteLLM logs / context limits.`;
+    log("empty native stream:", msg);
+    writeAnthropicEvent(res, "message_start", {
+      type: "message_start",
+      message: {
+        id: provisionalId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: clientModel,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+    writeAnthropicSseError(res, msg);
+    return;
+  }
 
-    const endpoint = getPrimaryEndpoint(config, routing.tier);
-    startAnthropicContentBlock(res);
-
-    const abort = new AbortController();
-    const onAbort = () => abort.abort();
-    req.once("aborted", onAbort);
-    res.once("close", onAbort);
-
-    let full = "";
+  if (canWrite(res)) {
     try {
-      for await (const chunk of chatCompletionStream(
-        endpoint,
-        routing.tier,
-        { messages, maxTokens },
-        { signal: abort.signal }
-      )) {
-        if (abort.signal.aborted || !canWrite(res)) break;
-        if (chunk.content) {
-          full += chunk.content;
-          writeAnthropicTextDelta(res, chunk.content);
-        }
-      }
-    } finally {
-      req.off("aborted", onAbort);
-      res.off("close", onAbort);
+      res.end();
+    } catch {
+      /* ignore */
     }
+  }
 
-    if (!canWrite(res)) return;
-    const outputTokens = Math.max(1, Math.ceil(full.length / 4));
-    if (verbose) {
-      log(
-        `ok ${Date.now() - started}ms streamed=${full.length}ch routed=${routing.model} tier=${routing.tier}`
-      );
-    }
-    endAnthropicMessage(res, outputTokens);
-  } catch (err) {
-    stopHeartbeat();
-    throw err;
+  if (verbose) {
+    log(
+      `ok ${Date.now() - started}ms streamed=${textChars}ch ` +
+        `stop=${stopReason ?? "end_turn"} routed=${routedModel} tier=${routedTier} native=1` +
+        (sawMessageStop ? "" : " truncated=1")
+    );
   }
 }
 
@@ -579,6 +892,7 @@ async function streamRoutedOpenAi(opts: {
   res: ServerResponse;
   req: IncomingMessage;
   messages: ChatMessage[];
+  tools?: unknown[];
   options: ProxyServerOptions;
   config: RouterConfig;
   clientModel: string;
@@ -591,6 +905,7 @@ async function streamRoutedOpenAi(opts: {
     res,
     req,
     messages,
+    tools,
     options,
     config,
     clientModel,
@@ -605,7 +920,7 @@ async function streamRoutedOpenAi(opts: {
 
   try {
     const { routing } = await dryRunRoute(
-      { messages, overrides: proxyOverrides(req, options) },
+      { messages, tools, overrides: proxyOverrides(req, options) },
       { config }
     );
     stopHeartbeat();
@@ -634,15 +949,20 @@ async function streamRoutedOpenAi(opts: {
     req.once("aborted", onAbort);
     res.once("close", onAbort);
 
+    let sawToolCalls = false;
+    let lastFinish: string | null = null;
+
     try {
       for await (const chunk of chatCompletionStream(
         endpoint,
         routing.tier,
-        { messages, maxTokens },
+        { messages, tools, maxTokens },
         { signal: abort.signal }
       )) {
         if (abort.signal.aborted || !canWrite(res)) break;
-        if (chunk.content) {
+        if (chunk.finishReason) lastFinish = chunk.finishReason;
+        if (chunk.toolCallDeltas?.length) sawToolCalls = true;
+        if (chunk.content || chunk.toolCallDeltas?.length) {
           safeWrite(
             res,
             `data: ${JSON.stringify({
@@ -650,7 +970,18 @@ async function streamRoutedOpenAi(opts: {
               object: "chat.completion.chunk",
               created,
               model: clientModel,
-              choices: [{ index: 0, delta: { content: chunk.content }, finish_reason: null }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    ...(chunk.content ? { content: chunk.content } : {}),
+                    ...(chunk.toolCallDeltas?.length
+                      ? { tool_calls: chunk.toolCallDeltas }
+                      : {}),
+                  },
+                  finish_reason: null,
+                },
+              ],
               maestro: maestroMeta,
             })}\n\n`
           );
@@ -662,6 +993,8 @@ async function streamRoutedOpenAi(opts: {
     }
 
     if (!canWrite(res)) return;
+    const finishReason =
+      sawToolCalls || lastFinish === "tool_calls" ? "tool_calls" : "stop";
     safeWrite(
       res,
       `data: ${JSON.stringify({
@@ -669,7 +1002,7 @@ async function streamRoutedOpenAi(opts: {
         object: "chat.completion.chunk",
         created,
         model: clientModel,
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
       })}\n\n`
     );
     safeWrite(res, "data: [DONE]\n\n");
@@ -782,6 +1115,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           stream?: boolean;
           max_tokens?: number;
           tools?: unknown[];
+          tool_choice?: unknown;
+          temperature?: number;
+          top_p?: number;
+          top_k?: number;
+          stop_sequences?: unknown;
+          metadata?: unknown;
         };
 
         if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -812,8 +1151,34 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         }
 
         const chatMessages = anthropicToChatMessages(body.messages, body.system);
+        const openAiTools = anthropicToolsToOpenAi(
+          Array.isArray(body.tools) ? body.tools : undefined
+        );
         const provisionalId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const wantsStream = body.stream === true;
+        const maxTokens =
+          typeof body.max_tokens === "number" && body.max_tokens > 0
+            ? body.max_tokens
+            : undefined;
+        const anthropicBody = {
+          messages: body.messages,
+          system: body.system,
+          tools: Array.isArray(body.tools) ? body.tools : undefined,
+          tool_choice: body.tool_choice,
+          max_tokens: body.max_tokens,
+          temperature: body.temperature,
+          top_p: body.top_p,
+          top_k: body.top_k,
+          stop_sequences: body.stop_sequences,
+          metadata: body.metadata,
+        };
+        const forwardHeaders: Record<string, string> = {};
+        const beta = req.headers["anthropic-beta"];
+        if (typeof beta === "string" && beta.trim()) {
+          forwardHeaders["anthropic-beta"] = beta;
+        } else if (Array.isArray(beta) && beta[0]) {
+          forwardHeaders["anthropic-beta"] = beta[0];
+        }
 
         if (wantsStream) {
           try {
@@ -821,14 +1186,14 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
               res,
               req,
               messages: chatMessages,
+              tools: openAiTools,
+              anthropicBody,
+              forwardHeaders,
               options,
               config,
               clientModel,
               provisionalId,
-              maxTokens:
-                typeof body.max_tokens === "number" && body.max_tokens > 0
-                  ? body.max_tokens
-                  : undefined,
+              maxTokens,
               started,
               verbose,
             });
@@ -842,9 +1207,135 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
 
         let stopHeartbeat: (() => void) | undefined = beginJsonKeepalive(res, 5_000);
 
-        let result;
         try {
-          result = await runRouted(chatMessages, req, options, config);
+          const { routing } = await dryRunRoute(
+            {
+              messages: chatMessages,
+              tools: openAiTools,
+              overrides: proxyOverrides(req, options),
+            },
+            { config }
+          );
+          if (req.aborted || res.destroyed) {
+            if (verbose) log("client gone after route");
+            try {
+              res.end();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+
+          const endpoint = getPrimaryEndpoint(config, routing.tier);
+          let content: Array<Record<string, unknown>> = [];
+          let stopReason = "end_turn";
+          let inputTokens = 0;
+          let outputTokens = 1;
+
+          if (supportsAnthropicMessages(endpoint)) {
+            const normalized = normalizeAnthropicSystem(
+              anthropicBody.messages,
+              anthropicBody.system
+            );
+            const native = await anthropicMessagesCompletion(
+              endpoint,
+              {
+                model: endpoint.model,
+                messages: normalized.messages,
+                max_tokens: maxTokens ?? 4096,
+                ...(normalized.system != null ? { system: normalized.system } : {}),
+                ...(anthropicBody.tools ? { tools: anthropicBody.tools } : {}),
+                ...(anthropicBody.tool_choice != null
+                  ? { tool_choice: anthropicBody.tool_choice }
+                  : {}),
+              },
+              { headers: forwardHeaders }
+            );
+            stopHeartbeat?.();
+            stopHeartbeat = undefined;
+
+            content = Array.isArray(native.content)
+              ? (native.content as Array<Record<string, unknown>>)
+              : [{ type: "text", text: asText(native.content) }];
+            stopReason =
+              typeof native.stop_reason === "string" ? native.stop_reason : "end_turn";
+            const usage = native.usage as
+              | { input_tokens?: number; output_tokens?: number }
+              | undefined;
+            inputTokens = usage?.input_tokens ?? 0;
+            outputTokens = usage?.output_tokens ?? 1;
+          } else {
+            const completion = await chatCompletionWithTools(endpoint, routing.tier, {
+              messages: chatMessages,
+              tools: openAiTools,
+              maxTokens,
+            });
+            stopHeartbeat?.();
+            stopHeartbeat = undefined;
+
+            const text = asText(completion.content);
+            if (text) content.push({ type: "text", text });
+            if (completion.toolCalls?.length) {
+              for (const tc of completion.toolCalls) {
+                let input: unknown = {};
+                try {
+                  input = JSON.parse(tc.function?.arguments || "{}");
+                } catch {
+                  input = { raw: tc.function?.arguments };
+                }
+                content.push({
+                  type: "tool_use",
+                  id: tc.id,
+                  name: tc.function?.name ?? "",
+                  input,
+                });
+              }
+            }
+            if (content.length === 0) content.push({ type: "text", text: "" });
+            stopReason =
+              completion.toolCalls?.length || completion.finishReason === "tool_calls"
+                ? "tool_use"
+                : "end_turn";
+            inputTokens = completion.usage?.promptTokens ?? 0;
+            outputTokens =
+              completion.usage?.completionTokens ??
+              Math.max(1, Math.ceil(text.length / 4));
+          }
+
+          if (req.aborted || res.destroyed) {
+            try {
+              res.end();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+
+          if (verbose) {
+            log(
+              `ok ${Date.now() - started}ms routed=${routing.model} tier=${routing.tier} stop=${stopReason}`
+            );
+          }
+
+          endJsonKeepalive(res, {
+            id: provisionalId,
+            type: "message",
+            role: "assistant",
+            model: clientModel,
+            content,
+            stop_reason: stopReason,
+            stop_sequence: null,
+            usage: {
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+            },
+            maestro: {
+              tier: routing.tier,
+              routed_model: routing.model,
+              provider: routing.provider,
+              reason: routing.reason,
+            },
+          });
         } catch (err) {
           stopHeartbeat?.();
           const message = err instanceof Error ? err.message : String(err);
@@ -860,53 +1351,6 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         } finally {
           stopHeartbeat?.();
         }
-
-        if (req.aborted || res.destroyed) {
-          if (verbose) log("client gone after route");
-          if (res.headersSent && canWrite(res)) {
-            try {
-              res.end();
-            } catch {
-              /* ignore */
-            }
-          }
-          return;
-        }
-
-        const text = asText(result.response.content);
-        const id = `msg_${result.telemetryId ?? provisionalId}`;
-        const inputTokens = result.response.usage?.promptTokens ?? 0;
-        const outputTokens =
-          result.response.usage?.completionTokens ??
-          Math.max(1, Math.ceil(text.length / 4));
-
-        if (verbose) {
-          log(
-            `ok ${Date.now() - started}ms routed=${result.routing.model} tier=${result.routing.tier}`
-          );
-        }
-
-        endJsonKeepalive(res, {
-          id,
-          type: "message",
-          role: "assistant",
-          model: clientModel,
-          content: [{ type: "text", text }],
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: {
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
-          },
-          maestro: {
-            tier: result.routing.tier,
-            routed_model: result.routing.model,
-            provider: result.routing.provider,
-            reason: result.routing.reason,
-            escalated: result.escalated,
-            telemetry_id: result.telemetryId,
-          },
-        });
       } catch (err) {
         log("messages error:", err instanceof Error ? err.stack ?? err.message : err);
         if (res.headersSent) {
@@ -939,7 +1383,9 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         const body = JSON.parse(raw || "{}") as {
           model?: string;
           messages?: ChatMessage[];
+          tools?: unknown[];
           stream?: boolean;
+          max_tokens?: number;
         };
 
         if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -953,6 +1399,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           typeof body.model === "string" && body.model.trim()
             ? body.model.trim()
             : "maestro";
+        const openAiTools =
+          Array.isArray(body.tools) && body.tools.length > 0 ? body.tools : undefined;
+        const maxTokens =
+          typeof body.max_tokens === "number" && body.max_tokens > 0
+            ? body.max_tokens
+            : undefined;
 
         const provisionalId = `maestro-${Date.now().toString(36)}`;
         if (body.stream) {
@@ -961,10 +1413,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
               res,
               req,
               messages: body.messages,
+              tools: openAiTools,
               options,
               config,
               clientModel,
               provisionalId,
+              maxTokens,
               started,
               verbose,
             });
@@ -991,37 +1445,59 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           return;
         }
 
-        const result = await runRouted(body.messages, req, options, config);
+        const { routing } = await dryRunRoute(
+          {
+            messages: body.messages,
+            tools: openAiTools,
+            overrides: proxyOverrides(req, options),
+          },
+          { config }
+        );
         if (req.aborted || res.destroyed) return;
 
-        const text = asText(result.response.content);
-        const id = `maestro-${result.telemetryId ?? provisionalId}`;
+        const endpoint = getPrimaryEndpoint(config, routing.tier);
+        const completion = await chatCompletionWithTools(endpoint, routing.tier, {
+          messages: body.messages,
+          tools: openAiTools,
+          maxTokens,
+        });
+        if (req.aborted || res.destroyed) return;
+
+        const text = asText(completion.content);
+        const finishReason =
+          completion.toolCalls?.length || completion.finishReason === "tool_calls"
+            ? "tool_calls"
+            : "stop";
         const maestroMeta = {
-          tier: result.routing.tier,
-          routed_model: result.routing.model,
-          provider: result.routing.provider,
-          reason: result.routing.reason,
-          escalated: result.escalated,
-          telemetry_id: result.telemetryId,
+          tier: routing.tier,
+          routed_model: routing.model,
+          provider: routing.provider,
+          reason: routing.reason,
         };
 
         sendJson(res, 200, {
-          id,
+          id: provisionalId,
           object: "chat.completion",
           created: Math.floor(Date.now() / 1000),
           model: clientModel,
           choices: [
             {
               index: 0,
-              message: { role: "assistant", content: text },
-              finish_reason: "stop",
+              message: {
+                role: "assistant",
+                content: text || null,
+                ...(completion.toolCalls?.length
+                  ? { tool_calls: completion.toolCalls }
+                  : {}),
+              },
+              finish_reason: finishReason,
             },
           ],
-          usage: result.response.usage
+          usage: completion.usage
             ? {
-                prompt_tokens: result.response.usage.promptTokens ?? 0,
-                completion_tokens: result.response.usage.completionTokens ?? 0,
-                total_tokens: result.response.usage.totalTokens ?? 0,
+                prompt_tokens: completion.usage.promptTokens ?? 0,
+                completion_tokens: completion.usage.completionTokens ?? 0,
+                total_tokens: completion.usage.totalTokens ?? 0,
               }
             : undefined,
           maestro: maestroMeta,

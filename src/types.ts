@@ -214,9 +214,23 @@ export interface RoutingDecision {
   };
 }
 
+export interface ChatMessageToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** OpenAI-style tool calls on assistant messages */
+  tool_calls?: ChatMessageToolCall[];
+  /** OpenAI-style tool result correlation on role=tool messages */
+  tool_call_id?: string;
+  name?: string;
 }
 
 export interface RoutedLLMCallInput {

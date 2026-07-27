@@ -313,7 +313,8 @@ Tips:
 
 - Cap with `--max-tier hosted_oss` (or `local_strong`) so tool-heavy Claude Code prompts don’t escalate to Bedrock.
 - The proxy **echoes your requested model id** (clients won’t reject `glm` / `maestro`); real model is in `maestro.routed_model`.
-- Streaming is a single SSE burst (OpenAI or Anthropic event shapes). Request logs go to stderr as `[maestro-proxy] …`.
+- **Tool passthrough:** For LiteLLM backends, Anthropic `/v1/messages` is forwarded natively (tools, tool_use, tool_result, betas) so Claude Code agent loops stay intact. OpenAI-compatible fallback still converts tools when needed.
+- Streaming is live token SSE (OpenAI or Anthropic event shapes). Request logs go to stderr as `[maestro-proxy] …`.
 - For long routes, the proxy opens the SSE stream immediately and sends Anthropic `ping` / SSE comment heartbeats so Claude Code does not idle-reset the connection.
 - Non-stream fallbacks (`stream:false`, used after Claude Code stream idle timeout) get leading JSON whitespace keepalives every 5s so the request timeout does not fire while Maestro routes.
 - **Live token streaming** — `stream:true` routes via a fast dry-run decision, then forwards upstream SSE deltas as they arrive (not a single buffered dump).

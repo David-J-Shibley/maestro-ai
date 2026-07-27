@@ -211,15 +211,20 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
   const systemPrompt = input.systemPrompt ?? "";
   const combined = `${systemPrompt}\n${userPrompt}`;
 
+  const toolCount = Array.isArray(input.tools) ? input.tools.length : 0;
+  const toolCatalogTokens =
+    toolCount > 0
+      ? estimateTokens(JSON.stringify(input.tools).slice(0, 400_000))
+      : 0;
   const contextTokens =
-    input.contextSizeTokens ?? estimateTokens(combined);
+    input.contextSizeTokens ?? estimateTokens(combined) + toolCatalogTokens;
   const taskType = detectTaskType(userPrompt, input.taskHints);
   signals.push(`taskType=${taskType}`);
 
   const requiresToolUse =
-    input.taskHints?.requiresTools ??
-    (Array.isArray(input.tools) && input.tools.length > 0);
+    input.taskHints?.requiresTools ?? toolCount > 0;
   if (requiresToolUse) signals.push("tools_present");
+  if (toolCount >= 20) signals.push(`large_tool_catalog=${toolCount}`);
 
   const requiresStructuredOutput =
     input.taskHints?.requiresStructuredOutput ??
@@ -227,7 +232,8 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
   if (requiresStructuredOutput) signals.push("structured_output");
 
   const requiresLongContext =
-    input.taskHints?.requiresLongContext ?? contextTokens > 32000;
+    input.taskHints?.requiresLongContext ??
+    (contextTokens > 32_000 || toolCount >= 20);
   if (requiresLongContext) signals.push("long_context");
 
   const requiresCodeReasoning =
