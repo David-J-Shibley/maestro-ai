@@ -127,11 +127,25 @@ export function routeTask(input: RouteInput): RoutingDecision {
     reasons.push(`default tier: ${tier}`);
   }
 
+  // Agent harness turns (Claude Code etc.) need reliable structured tool_calls.
+  if (analysis.requiresToolUse) {
+    const toolFloor: ModelTier =
+      analysis.requiresCodeReasoning || analysis.difficulty !== "easy"
+        ? "hosted_oss"
+        : "local_strong";
+    const floorIdx = TIER_ORDER.indexOf(toolFloor);
+    if (TIER_ORDER.indexOf(tier) < floorIdx) {
+      tier = toolFloor;
+      reasons.push(`tool-use floor → ${toolFloor}`);
+    }
+  }
+
   if (
     preferLocal &&
     !isLocalTier(tier) &&
     analysis.difficulty === "easy" &&
-    analysis.riskLevel === "low"
+    analysis.riskLevel === "low" &&
+    !analysis.requiresToolUse
   ) {
     tier = "local_strong";
     reasons.push("preferLocal bumped easy low-risk task to local_strong");

@@ -1,5 +1,6 @@
 export type {
   ChatMessage,
+  ChatMessageToolCall,
   EvaluationCheck,
   EvaluationResult,
   EvaluatorContext,
@@ -68,7 +69,11 @@ export {
 export { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-evaluator.js";
 
 export { chatCompletion, ProviderError } from "./provider/openai-compatible.js";
-export { chatCompletionStream, routedLLMStream } from "./provider/stream.js";
+export {
+  chatCompletionStream,
+  chatCompletionWithTools,
+  routedLLMStream,
+} from "./provider/stream.js";
 export { probeAllTiers, probeEndpoint, probeTier, clearProbeCache } from "./provider/probe.js";
 
 export { routeTask } from "./router/model-router.js";
