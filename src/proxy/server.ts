@@ -6,9 +6,10 @@
  *
  * Always echo the client-requested model id; real routed model is in metadata.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { loadConfig } from "../config/load-config.js";
-import { routedLLMCall } from "../routed-llm-call.js";
+import { getPrimaryEndpoint } from "../config/tier-config.js";
+import { dryRunRoute, routedLLMCall } from "../routed-llm-call.js";
+import { chatCompletionStream } from "../provider/stream.js";
 import type {
   ChatMessage,
   ModelTier,
@@ -18,6 +19,8 @@ import type {
 } from "../types.js";
 import { isRoutingMode } from "../routing/modes.js";
 import { PACKAGE_VERSION } from "../version.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { createServer } from "node:http";
 
 export interface ProxyServerOptions {
   port?: number;
@@ -186,7 +189,15 @@ function resolveMode(
 function safeWrite(res: ServerResponse, chunk: string): boolean {
   if (!canWrite(res)) return false;
   try {
-    res.write(chunk);
+    const ok = res.write(chunk);
+    // Flush when possible so proxies/clients see bytes promptly.
+    const sock = res.socket;
+    if (sock && typeof (sock as { setNoDelay?: (v: boolean) => void }).setNoDelay === "function") {
+      sock.setNoDelay(true);
+    }
+    if (!ok && typeof (res as { flushHeaders?: () => void }).flushHeaders === "function") {
+      /* backpressure — still ok */
+    }
     return true;
   } catch (err) {
     log("write failed:", err instanceof Error ? err.message : err);
@@ -194,15 +205,77 @@ function safeWrite(res: ServerResponse, chunk: string): boolean {
   }
 }
 
-function writeOpenAiSse(
+function startSseHeartbeat(
   res: ServerResponse,
-  opts: { id: string; model: string; content: string; maestro: Record<string, unknown> }
+  protocol: "anthropic" | "openai",
+  intervalMs = 5_000
+): () => void {
+  const tick = () => {
+    if (!canWrite(res)) return;
+    if (protocol === "anthropic") {
+      safeWrite(res, `event: ping\ndata: ${JSON.stringify({ type: "ping" })}\n\n`);
+    } else {
+      // SSE comment — keeps intermediaries/clients from idle-closing.
+      safeWrite(res, `: ping ${Date.now()}\n\n`);
+    }
+  };
+  // Immediate keepalive so the first-byte timeout never fires during routing.
+  tick();
+  const id = setInterval(tick, intervalMs);
+  // Unref so heartbeats alone don't keep the process alive in tests.
+  if (typeof id === "object" && "unref" in id) {
+    (id as NodeJS.Timeout).unref();
+  }
+  return () => clearInterval(id);
+}
+
+/**
+ * Claude Code retries with stream:false after stream idle timeout.
+ * Keep the socket alive with leading whitespace (valid before JSON.parse).
+ */
+function beginJsonKeepalive(res: ServerResponse, intervalMs = 5_000): () => void {
+  if (!canWrite(res) || res.headersSent) return () => undefined;
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const tick = () => {
+    safeWrite(res, " \n");
+  };
+  tick();
+  const id = setInterval(tick, intervalMs);
+  if (typeof id === "object" && "unref" in id) {
+    (id as NodeJS.Timeout).unref();
+  }
+  return () => clearInterval(id);
+}
+
+function endJsonKeepalive(res: ServerResponse, body: unknown): void {
+  if (!canWrite(res)) return;
+  try {
+    res.end(JSON.stringify(body));
+  } catch (err) {
+    log("endJsonKeepalive failed:", err instanceof Error ? err.message : err);
+    try {
+      res.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function beginOpenAiSse(
+  res: ServerResponse,
+  opts: { id: string; model: string }
 ): void {
   if (!canWrite(res) || res.headersSent) return;
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
   const created = Math.floor(Date.now() / 1000);
   safeWrite(
@@ -212,7 +285,25 @@ function writeOpenAiSse(
       object: "chat.completion.chunk",
       created,
       model: opts.model,
-      choices: [{ index: 0, delta: { role: "assistant", content: opts.content }, finish_reason: null }],
+      choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+    })}\n\n`
+  );
+}
+
+function finishOpenAiSse(
+  res: ServerResponse,
+  opts: { id: string; model: string; content: string; maestro: Record<string, unknown> }
+): void {
+  if (!canWrite(res)) return;
+  const created = Math.floor(Date.now() / 1000);
+  safeWrite(
+    res,
+    `data: ${JSON.stringify({
+      id: opts.id,
+      object: "chat.completion.chunk",
+      created,
+      model: opts.model,
+      choices: [{ index: 0, delta: { content: opts.content }, finish_reason: null }],
       maestro: opts.maestro,
     })}\n\n`
   );
@@ -234,58 +325,109 @@ function writeOpenAiSse(
   }
 }
 
-/** Anthropic Messages streaming — Claude Code expects this event sequence. */
-function writeAnthropicSse(
+function beginAnthropicSse(
   res: ServerResponse,
-  opts: {
-    id: string;
-    model: string;
-    content: string;
-    inputTokens: number;
-    outputTokens: number;
-  }
+  opts: { id: string; model: string; inputTokens?: number }
 ): void {
   if (!canWrite(res) || res.headersSent) return;
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache",
+    "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
+  safeWrite(
+    res,
+    `event: message_start\ndata: ${JSON.stringify({
+      type: "message_start",
+      message: {
+        id: opts.id,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: opts.model,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: opts.inputTokens ?? 0, output_tokens: 0 },
+      },
+    })}\n\n`
+  );
+}
 
-  const writeEvent = (event: string, data: unknown) => {
-    safeWrite(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
+function writeAnthropicEvent(res: ServerResponse, event: string, data: unknown): boolean {
+  return safeWrite(res, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
 
-  writeEvent("message_start", {
-    type: "message_start",
-    message: {
-      id: opts.id,
-      type: "message",
-      role: "assistant",
-      content: [],
-      model: opts.model,
-      stop_reason: null,
-      stop_sequence: null,
-      usage: { input_tokens: opts.inputTokens, output_tokens: 0 },
-    },
-  });
-  writeEvent("content_block_start", {
+function startAnthropicContentBlock(res: ServerResponse): void {
+  writeAnthropicEvent(res, "content_block_start", {
     type: "content_block_start",
     index: 0,
     content_block: { type: "text", text: "" },
   });
-  writeEvent("content_block_delta", {
+}
+
+function writeAnthropicTextDelta(res: ServerResponse, text: string): void {
+  if (!text) return;
+  writeAnthropicEvent(res, "content_block_delta", {
     type: "content_block_delta",
     index: 0,
-    delta: { type: "text_delta", text: opts.content },
+    delta: { type: "text_delta", text },
   });
-  writeEvent("content_block_stop", { type: "content_block_stop", index: 0 });
-  writeEvent("message_delta", {
+}
+
+function endAnthropicMessage(res: ServerResponse, outputTokens: number): void {
+  writeAnthropicEvent(res, "content_block_stop", { type: "content_block_stop", index: 0 });
+  writeAnthropicEvent(res, "message_delta", {
     type: "message_delta",
     delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: opts.outputTokens },
+    usage: { output_tokens: outputTokens },
   });
-  writeEvent("message_stop", { type: "message_stop" });
+  writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
+  try {
+    res.end();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Fallback when upstream streaming is unavailable — dump full text as deltas. */
+function finishAnthropicSse(
+  res: ServerResponse,
+  opts: {
+    content: string;
+    outputTokens: number;
+  }
+): void {
+  if (!canWrite(res)) return;
+  startAnthropicContentBlock(res);
+  const text = opts.content;
+  const chunkSize = 48;
+  if (!text) {
+    writeAnthropicTextDelta(res, "");
+  } else {
+    for (let i = 0; i < text.length; i += chunkSize) {
+      writeAnthropicTextDelta(res, text.slice(i, i + chunkSize));
+    }
+  }
+  endAnthropicMessage(res, opts.outputTokens);
+}
+
+function writeAnthropicSseError(res: ServerResponse, message: string): void {
+  if (!canWrite(res)) return;
+  if (!res.headersSent) {
+    sendJson(res, 500, {
+      type: "error",
+      error: { type: "api_error", message },
+    });
+    return;
+  }
+  safeWrite(
+    res,
+    `event: error\ndata: ${JSON.stringify({
+      type: "error",
+      error: { type: "api_error", message },
+    })}\n\n`
+  );
   try {
     res.end();
   } catch {
@@ -317,6 +459,232 @@ async function runRouted(
     session,
   };
   return routedLLMCall({ messages, overrides }, { config });
+}
+
+function proxyOverrides(
+  req: IncomingMessage,
+  options: ProxyServerOptions
+): RouterOverrides {
+  const session =
+    options.sessionId || options.maxTier || options.alwaysPreferLocal
+      ? {
+          sessionId: options.sessionId,
+          maxTier: options.maxTier,
+          alwaysPreferLocal: options.alwaysPreferLocal,
+        }
+      : undefined;
+  return {
+    mode: resolveMode(req, options),
+    preferLocal: options.alwaysPreferLocal,
+    session,
+  };
+}
+
+/** Route once, then stream tokens live from the selected endpoint (no post-buffer). */
+async function streamRoutedAnthropic(opts: {
+  res: ServerResponse;
+  req: IncomingMessage;
+  messages: ChatMessage[];
+  options: ProxyServerOptions;
+  config: RouterConfig;
+  clientModel: string;
+  provisionalId: string;
+  maxTokens?: number;
+  started: number;
+  verbose: boolean;
+}): Promise<void> {
+  const {
+    res,
+    req,
+    messages,
+    options,
+    config,
+    clientModel,
+    provisionalId,
+    maxTokens,
+    started,
+    verbose,
+  } = opts;
+
+  beginAnthropicSse(res, { id: provisionalId, model: clientModel });
+  let stopHeartbeat = startSseHeartbeat(res, "anthropic", 5_000);
+
+  try {
+    const { routing } = await dryRunRoute(
+      { messages, overrides: proxyOverrides(req, options) },
+      { config }
+    );
+    stopHeartbeat();
+    stopHeartbeat = () => undefined;
+
+    if (req.aborted || res.destroyed) {
+      if (verbose) log("client gone after route decision");
+      try {
+        res.end();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    if (verbose) {
+      log(
+        `streaming via ${routing.provider}/${routing.model} tier=${routing.tier} ` +
+          `(decision ${Date.now() - started}ms)`
+      );
+    }
+
+    const endpoint = getPrimaryEndpoint(config, routing.tier);
+    startAnthropicContentBlock(res);
+
+    const abort = new AbortController();
+    const onAbort = () => abort.abort();
+    req.once("aborted", onAbort);
+    res.once("close", onAbort);
+
+    let full = "";
+    try {
+      for await (const chunk of chatCompletionStream(
+        endpoint,
+        routing.tier,
+        { messages, maxTokens },
+        { signal: abort.signal }
+      )) {
+        if (abort.signal.aborted || !canWrite(res)) break;
+        if (chunk.content) {
+          full += chunk.content;
+          writeAnthropicTextDelta(res, chunk.content);
+        }
+      }
+    } finally {
+      req.off("aborted", onAbort);
+      res.off("close", onAbort);
+    }
+
+    if (!canWrite(res)) return;
+    const outputTokens = Math.max(1, Math.ceil(full.length / 4));
+    if (verbose) {
+      log(
+        `ok ${Date.now() - started}ms streamed=${full.length}ch routed=${routing.model} tier=${routing.tier}`
+      );
+    }
+    endAnthropicMessage(res, outputTokens);
+  } catch (err) {
+    stopHeartbeat();
+    throw err;
+  }
+}
+
+async function streamRoutedOpenAi(opts: {
+  res: ServerResponse;
+  req: IncomingMessage;
+  messages: ChatMessage[];
+  options: ProxyServerOptions;
+  config: RouterConfig;
+  clientModel: string;
+  provisionalId: string;
+  maxTokens?: number;
+  started: number;
+  verbose: boolean;
+}): Promise<void> {
+  const {
+    res,
+    req,
+    messages,
+    options,
+    config,
+    clientModel,
+    provisionalId,
+    maxTokens,
+    started,
+    verbose,
+  } = opts;
+
+  beginOpenAiSse(res, { id: provisionalId, model: clientModel });
+  let stopHeartbeat = startSseHeartbeat(res, "openai", 5_000);
+
+  try {
+    const { routing } = await dryRunRoute(
+      { messages, overrides: proxyOverrides(req, options) },
+      { config }
+    );
+    stopHeartbeat();
+    stopHeartbeat = () => undefined;
+
+    if (req.aborted || res.destroyed) {
+      try {
+        res.end();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const endpoint = getPrimaryEndpoint(config, routing.tier);
+    const created = Math.floor(Date.now() / 1000);
+    const maestroMeta = {
+      tier: routing.tier,
+      routed_model: routing.model,
+      provider: routing.provider,
+      reason: routing.reason,
+    };
+
+    const abort = new AbortController();
+    const onAbort = () => abort.abort();
+    req.once("aborted", onAbort);
+    res.once("close", onAbort);
+
+    try {
+      for await (const chunk of chatCompletionStream(
+        endpoint,
+        routing.tier,
+        { messages, maxTokens },
+        { signal: abort.signal }
+      )) {
+        if (abort.signal.aborted || !canWrite(res)) break;
+        if (chunk.content) {
+          safeWrite(
+            res,
+            `data: ${JSON.stringify({
+              id: provisionalId,
+              object: "chat.completion.chunk",
+              created,
+              model: clientModel,
+              choices: [{ index: 0, delta: { content: chunk.content }, finish_reason: null }],
+              maestro: maestroMeta,
+            })}\n\n`
+          );
+        }
+      }
+    } finally {
+      req.off("aborted", onAbort);
+      res.off("close", onAbort);
+    }
+
+    if (!canWrite(res)) return;
+    safeWrite(
+      res,
+      `data: ${JSON.stringify({
+        id: provisionalId,
+        object: "chat.completion.chunk",
+        created,
+        model: clientModel,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      })}\n\n`
+    );
+    safeWrite(res, "data: [DONE]\n\n");
+    try {
+      res.end();
+    } catch {
+      /* ignore */
+    }
+    if (verbose) {
+      log(`ok ${Date.now() - started}ms openai-stream routed=${routing.model}`);
+    }
+  } catch (err) {
+    stopHeartbeat();
+    throw err;
+  }
 }
 
 function installProcessGuards(): void {
@@ -359,6 +727,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
       });
     });
   });
+
+  // Long Claude Code / Bedrock routes can exceed Node defaults.
+  server.requestTimeout = 0;
+  server.headersTimeout = 120_000;
+  server.keepAliveTimeout = 120_000;
+  if (typeof server.timeout === "number") server.timeout = 0;
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = Date.now();
@@ -425,7 +799,8 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
 
         if (verbose) {
           log(
-            `messages model=${clientModel} stream=${Boolean(body.stream)} ` +
+            `messages model=${clientModel} stream=${body.stream === true} ` +
+              `(raw=${JSON.stringify(body.stream)}) ` +
               `msgs=${body.messages.length} tools=${Array.isArray(body.tools) ? body.tools.length : 0} ` +
               `bodyBytes=${raw.length}`
           );
@@ -437,14 +812,69 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         }
 
         const chatMessages = anthropicToChatMessages(body.messages, body.system);
-        const result = await runRouted(chatMessages, req, options, config);
+        const provisionalId = `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const wantsStream = body.stream === true;
+
+        if (wantsStream) {
+          try {
+            await streamRoutedAnthropic({
+              res,
+              req,
+              messages: chatMessages,
+              options,
+              config,
+              clientModel,
+              provisionalId,
+              maxTokens:
+                typeof body.max_tokens === "number" && body.max_tokens > 0
+                  ? body.max_tokens
+                  : undefined,
+              started,
+              verbose,
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log("messages stream error:", err instanceof Error ? err.stack ?? err.message : err);
+            writeAnthropicSseError(res, message);
+          }
+          return;
+        }
+
+        let stopHeartbeat: (() => void) | undefined = beginJsonKeepalive(res, 5_000);
+
+        let result;
+        try {
+          result = await runRouted(chatMessages, req, options, config);
+        } catch (err) {
+          stopHeartbeat?.();
+          const message = err instanceof Error ? err.message : String(err);
+          log("messages error:", err instanceof Error ? err.stack ?? err.message : err);
+          if (res.headersSent) {
+            endJsonKeepalive(res, {
+              type: "error",
+              error: { type: "api_error", message },
+            });
+            return;
+          }
+          throw err;
+        } finally {
+          stopHeartbeat?.();
+        }
+
         if (req.aborted || res.destroyed) {
           if (verbose) log("client gone after route");
+          if (res.headersSent && canWrite(res)) {
+            try {
+              res.end();
+            } catch {
+              /* ignore */
+            }
+          }
           return;
         }
 
         const text = asText(result.response.content);
-        const id = `msg_${result.telemetryId ?? Date.now()}`;
+        const id = `msg_${result.telemetryId ?? provisionalId}`;
         const inputTokens = result.response.usage?.promptTokens ?? 0;
         const outputTokens =
           result.response.usage?.completionTokens ??
@@ -456,18 +886,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           );
         }
 
-        if (body.stream) {
-          writeAnthropicSse(res, {
-            id,
-            model: clientModel,
-            content: text,
-            inputTokens,
-            outputTokens,
-          });
-          return;
-        }
-
-        sendJson(res, 200, {
+        endJsonKeepalive(res, {
           id,
           type: "message",
           role: "assistant",
@@ -490,13 +909,20 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         });
       } catch (err) {
         log("messages error:", err instanceof Error ? err.stack ?? err.message : err);
-        sendJson(res, 500, {
-          type: "error",
-          error: {
-            type: "api_error",
-            message: err instanceof Error ? err.message : String(err),
-          },
-        });
+        if (res.headersSent) {
+          writeAnthropicSseError(
+            res,
+            err instanceof Error ? err.message : String(err)
+          );
+        } else {
+          sendJson(res, 500, {
+            type: "error",
+            error: {
+              type: "api_error",
+              message: err instanceof Error ? err.message : String(err),
+            },
+          });
+        }
       }
       return;
     }
@@ -528,11 +954,48 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             ? body.model.trim()
             : "maestro";
 
+        const provisionalId = `maestro-${Date.now().toString(36)}`;
+        if (body.stream) {
+          try {
+            await streamRoutedOpenAi({
+              res,
+              req,
+              messages: body.messages,
+              options,
+              config,
+              clientModel,
+              provisionalId,
+              started,
+              verbose,
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log("chat stream error:", err instanceof Error ? err.stack ?? err.message : err);
+            if (res.headersSent) {
+              safeWrite(
+                res,
+                `data: ${JSON.stringify({ error: { message, type: "maestro_proxy_error" } })}\n\n`
+              );
+              safeWrite(res, "data: [DONE]\n\n");
+              try {
+                res.end();
+              } catch {
+                /* ignore */
+              }
+            } else {
+              sendJson(res, 500, {
+                error: { message, type: "maestro_proxy_error" },
+              });
+            }
+          }
+          return;
+        }
+
         const result = await runRouted(body.messages, req, options, config);
         if (req.aborted || res.destroyed) return;
 
         const text = asText(result.response.content);
-        const id = `maestro-${result.telemetryId ?? Date.now()}`;
+        const id = `maestro-${result.telemetryId ?? provisionalId}`;
         const maestroMeta = {
           tier: result.routing.tier,
           routed_model: result.routing.model,
@@ -541,16 +1004,6 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           escalated: result.escalated,
           telemetry_id: result.telemetryId,
         };
-
-        if (body.stream) {
-          writeOpenAiSse(res, {
-            id,
-            model: clientModel,
-            content: text,
-            maestro: maestroMeta,
-          });
-          return;
-        }
 
         sendJson(res, 200, {
           id,
@@ -575,12 +1028,14 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         });
       } catch (err) {
         log("chat error:", err instanceof Error ? err.stack ?? err.message : err);
-        sendJson(res, 500, {
-          error: {
-            message: err instanceof Error ? err.message : String(err),
-            type: "maestro_proxy_error",
-          },
-        });
+        if (!res.headersSent) {
+          sendJson(res, 500, {
+            error: {
+              message: err instanceof Error ? err.message : String(err),
+              type: "maestro_proxy_error",
+            },
+          });
+        }
       }
       return;
     }

@@ -20,7 +20,8 @@ export interface StreamChunk {
 export async function* chatCompletionStream(
   endpoint: ModelEndpointConfig,
   tier: ModelTier,
-  request: ChatCompletionRequest
+  request: ChatCompletionRequest,
+  options?: { signal?: AbortSignal }
 ): AsyncGenerator<StreamChunk> {
   const url = `${endpoint.baseUrl.replace(/\/$/, "")}/chat/completions`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -39,13 +40,29 @@ export async function* chatCompletionStream(
   if (request.tools?.length) body.tools = request.tools;
   if (request.responseFormat) body.response_format = request.responseFormat;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const timeoutMs = endpoint.timeoutMs ?? 300_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onOuterAbort = () => controller.abort();
+  options?.signal?.addEventListener("abort", onOuterAbort, { once: true });
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    options?.signal?.removeEventListener("abort", onOuterAbort);
+    throw err;
+  }
 
   if (!response.ok || !response.body) {
+    clearTimeout(timer);
+    options?.signal?.removeEventListener("abort", onOuterAbort);
     const text = await response.text().catch(() => "");
     throw new Error(`Stream failed ${response.status}: ${text.slice(0, 200)}`);
   }
@@ -54,38 +71,47 @@ export async function* chatCompletionStream(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (data === "[DONE]") {
-        yield { content: "", done: true, model: endpoint.model };
-        return;
+  try {
+    while (true) {
+      if (options?.signal?.aborted) {
+        await reader.cancel().catch(() => undefined);
+        break;
       }
-      try {
-        const parsed = JSON.parse(data) as {
-          model?: string;
-          choices?: Array<{ delta?: { content?: string } }>;
-        };
-        const delta = parsed.choices?.[0]?.delta?.content ?? "";
-        if (delta) {
-          yield { content: delta, done: false, model: parsed.model ?? endpoint.model };
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === "[DONE]") {
+          yield { content: "", done: true, model: endpoint.model };
+          return;
         }
-      } catch {
-        // ignore parse errors in stream chunks
+        try {
+          const parsed = JSON.parse(data) as {
+            model?: string;
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const delta = parsed.choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            yield { content: delta, done: false, model: parsed.model ?? endpoint.model };
+          }
+        } catch {
+          // ignore parse errors in stream chunks
+        }
       }
     }
-  }
 
-  yield { content: "", done: true, model: endpoint.model };
+    yield { content: "", done: true, model: endpoint.model };
+  } finally {
+    clearTimeout(timer);
+    options?.signal?.removeEventListener("abort", onOuterAbort);
+  }
 }
 
 export async function routedLLMStream(
@@ -93,7 +119,8 @@ export async function routedLLMStream(
   tier: ModelTier,
   messages: ChatMessage[],
   tools?: unknown[],
-  maxTokens?: number
+  maxTokens?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<AsyncGenerator<StreamChunk>> {
-  return chatCompletionStream(endpoint, tier, { messages, tools, maxTokens });
+  return chatCompletionStream(endpoint, tier, { messages, tools, maxTokens }, options);
 }

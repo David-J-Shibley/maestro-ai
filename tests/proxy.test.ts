@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProxyServer } from "../src/proxy/server.js";
+import { dryRunRoute, routedLLMCall } from "../src/routed-llm-call.js";
+import { chatCompletionStream } from "../src/provider/stream.js";
 
 vi.mock("../src/routed-llm-call.js", () => ({
   routedLLMCall: vi.fn(async () => ({
@@ -53,7 +55,53 @@ vi.mock("../src/routed-llm-call.js", () => ({
     attempts: [],
     telemetryId: "tel-1",
   })),
+  dryRunRoute: vi.fn(async () => ({
+    analysis: {
+      taskType: "simple_answer",
+      difficulty: "easy",
+      riskLevel: "low",
+      requiresToolUse: false,
+      requiresCodeReasoning: false,
+      requiresLongContext: false,
+      requiresStructuredOutput: false,
+      estimatedComplexityScore: 1,
+      confidence: 0.9,
+      signals: [],
+      promptHash: "x",
+    },
+    routing: {
+      tier: "local_strong",
+      model: "glm",
+      provider: "litellm",
+      baseUrl: "http://localhost:4000/v1",
+      reason: "test",
+      fallbackTier: null,
+      debug: [],
+    },
+  })),
 }));
+
+vi.mock("../src/provider/stream.js", () => ({
+  chatCompletionStream: vi.fn(async function* () {
+    yield { content: "hel", done: false, model: "glm" };
+    await new Promise((r) => setTimeout(r, 5));
+    yield { content: "lo from maestro", done: false, model: "glm" };
+    yield { content: "", done: true, model: "glm" };
+  }),
+}));
+
+vi.mock("../src/config/tier-config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/config/tier-config.js")>();
+  return {
+    ...actual,
+    getPrimaryEndpoint: vi.fn(() => ({
+      provider: "litellm",
+      model: "glm",
+      baseUrl: "http://localhost:4000/v1",
+      apiKey: "sk-test",
+    })),
+  };
+});
 
 describe("maestro proxy", () => {
   const proxies: Array<ReturnType<typeof createProxyServer>> = [];
@@ -62,6 +110,9 @@ describe("maestro proxy", () => {
     for (const p of proxies.splice(0)) {
       await p.close().catch(() => undefined);
     }
+    vi.mocked(routedLLMCall).mockClear();
+    vi.mocked(dryRunRoute).mockClear();
+    vi.mocked(chatCompletionStream).mockClear();
   });
 
   it("lists client aliases and echoes requested model (not routed glm)", async () => {
@@ -96,7 +147,7 @@ describe("maestro proxy", () => {
     expect(completion.maestro.routed_model).toBe("glm");
   });
 
-  it("serves Anthropic /v1/messages for Claude Code (echoes model, streams SSE)", async () => {
+  it("streams Anthropic deltas live (not one buffered dump)", async () => {
     const proxy = createProxyServer({ port: 0, host: "127.0.0.1" });
     proxies.push(proxy);
     const { port } = await new Promise<{ port: number }>((resolve, reject) => {
@@ -106,29 +157,6 @@ describe("maestro proxy", () => {
         else reject(new Error("no port"));
       });
     });
-
-    const msg = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-        "x-api-key": "test",
-      },
-      body: JSON.stringify({
-        model: "maestro",
-        max_tokens: 64,
-        messages: [{ role: "user", content: "hi" }],
-        stream: false,
-      }),
-    }).then(async (r) => {
-      expect(r.status).toBe(200);
-      return r.json();
-    });
-
-    expect(msg.type).toBe("message");
-    expect(msg.model).toBe("maestro");
-    expect(msg.content[0].text).toBe("hello from maestro");
-    expect(msg.maestro.routed_model).toBe("glm");
 
     const streamRes = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
       method: "POST",
@@ -146,9 +174,100 @@ describe("maestro proxy", () => {
     expect(streamRes.status).toBe(200);
     const sse = await streamRes.text();
     expect(sse).toContain("event: message_start");
-    expect(sse).toContain("event: content_block_delta");
-    expect(sse).toContain('"model":"claude-sonnet-4-6"');
-    expect(sse).toContain("hello from maestro");
+    expect(sse).toContain("event: ping");
+    expect(sse).toContain('"text":"hel"');
+    expect(sse).toContain('"text":"lo from maestro"');
     expect(sse).toContain("event: message_stop");
+    expect(dryRunRoute).toHaveBeenCalled();
+    expect(chatCompletionStream).toHaveBeenCalled();
+    expect(routedLLMCall).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-stream JSON responses alive with leading whitespace", async () => {
+    vi.mocked(routedLLMCall).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              response: {
+                content: "json ok",
+                model: "glm",
+                tier: "local_strong",
+                usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+                latencyMs: 80,
+                raw: {},
+              },
+              analysis: {
+                taskType: "simple_answer",
+                difficulty: "easy",
+                riskLevel: "low",
+                requiresToolUse: false,
+                requiresCodeReasoning: false,
+                requiresLongContext: false,
+                requiresStructuredOutput: false,
+                estimatedComplexityScore: 1,
+                confidence: 0.9,
+                signals: [],
+                promptHash: "x",
+              },
+              routing: {
+                tier: "local_strong",
+                model: "glm",
+                provider: "litellm",
+                baseUrl: "http://localhost:4000/v1",
+                reason: "test",
+                fallbackTier: null,
+                debug: [],
+              },
+              initialRouting: {
+                tier: "local_strong",
+                model: "glm",
+                provider: "litellm",
+                baseUrl: "http://localhost:4000/v1",
+                reason: "test",
+                fallbackTier: null,
+                debug: [],
+              },
+              evaluation: {
+                pass: true,
+                reason: "ok",
+                retryRecommended: false,
+                escalationRecommended: false,
+                checks: [],
+              },
+              escalated: false,
+              attempts: [],
+              telemetryId: "tel-json",
+            } as Awaited<ReturnType<typeof routedLLMCall>>);
+          }, 80);
+        })
+    );
+
+    const proxy = createProxyServer({ port: 0, host: "127.0.0.1" });
+    proxies.push(proxy);
+    const { port } = await new Promise<{ port: number }>((resolve, reject) => {
+      proxy.server.listen(0, "127.0.0.1", () => {
+        const addr = proxy.server.address();
+        if (addr && typeof addr === "object") resolve({ port: addr.port });
+        else reject(new Error("no port"));
+      });
+    });
+
+    const res = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "hi" }],
+        stream: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    expect(raw.trimStart().startsWith("{")).toBe(true);
+    const msg = JSON.parse(raw);
+    expect(msg.content[0].text).toBe("json ok");
+    expect(msg.model).toBe("maestro");
   });
 });
