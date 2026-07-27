@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-27
+
+### Added
+- **Native Anthropic `/v1/messages` passthrough** via LiteLLM — Claude Code `tools` / `tool_use` / `tool_result` (and betas) stay Anthropic-shaped end-to-end so real harness tools execute.
+- **OpenAI tool streaming fallback** — `tool_calls` deltas map to Anthropic `tool_use` SSE when native Messages isn’t available.
+- **Live token streaming** — proxy streams upstream tokens as they arrive (no post-buffer dump) for Anthropic and OpenAI clients.
+- **Idle keepalives** — Anthropic `ping` / SSE comments and JSON whitespace keepalives so Claude Code doesn’t idle-reset long routes.
+
+### Changed
+- **Large tool catalogs** (≥20 tools) count as long-context / agent-harness work and prefer premium tiers (e.g. Bedrock) instead of short-context hosted OSS.
+- **Tool-use routing floor** — tool-bearing turns aren’t preferLocal-downgraded to weak tiers.
+- README documents native tool passthrough for the proxy.
+
+### Fixed
+- Lift `role: "system"` messages into the top-level `system` parameter (Bedrock/Anthropic reject system roles inside `messages[]`).
+- Truncated LiteLLM streams (bare `message_start` on context overflow) now complete with `message_stop` + a clear error instead of Claude Code’s “Stream ended without receiving any events”.
+- Deduplicate LiteLLM’s double `message_start` frames.
+- Avoid Anthropic `ping` before `message_start` (confused Claude Code’s stream parser).
+
+[1.2.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.2.0
+
 ## [1.1.0] - 2026-07-26
 
 ### Added
