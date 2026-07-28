@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.5.3** hardens Claude Code tool loops (SSE sanitize, force tool_use, mid-loop tool forwarding). **v1.5.2** fixes the plain-reply greeting loop so real questions get model answers (tools still omitted when unused). **v1.5.1** fail-softs routing: ambiguous/short asks stay local (no Bedrock on `testing`). **v1.5** adds evidence-based routing, harness profiles, premium pool failover, sticky sessions, `/status`, and plain-reply retries.
+**v1.6.0** adds optional `local_fast` classify (`routing.llmClassify`: off/shadow/on) when heuristics are uncertain. **v1.5.3** hardens Claude Code tool loops (SSE sanitize, force tool_use, mid-loop tool forwarding). **v1.5.2** fixes the plain-reply greeting loop so real questions get model answers (tools still omitted when unused). **v1.5.1** fail-softs routing: ambiguous/short asks stay local (no Bedrock on `testing`). **v1.5** adds evidence-based routing, harness profiles, premium pool failover, sticky sessions, `/status`, and plain-reply retries.
 
 ## Quick start (new machine)
 
@@ -194,11 +194,13 @@ Opt-in hints in `~/.maestro-ai/config.json`:
 ```json
 "routing": {
   "learnedRoutingHints": true,
-  "learnedMinSamples": 5
+  "learnedMinSamples": 5,
+  "llmClassify": "shadow"
 }
 ```
 
-When enabled, the router may nudge tier selection when telemetry shows a meaningfully better tier for the task type (medium+ confidence). Decision cards show telemetry recommendations even when hints are off.
+- **`learnedRoutingHints`** — nudge tier from telemetry when confidence is high enough.
+- **`llmClassify`** — `off` (default) | `shadow` | `on`. When heuristics are uncertain, call `local_fast` for a tiny JSON classify. Shadow only logs disagreements (`llm_classify_diff=…` in signals / `/status`); `on` merges into routing with fail-soft (cannot solo-force premium).
 
 ### Workflow orchestration (v1.0+)
 

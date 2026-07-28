@@ -97,6 +97,13 @@ export interface RoutingConfig {
   /** When true, nudge tier selection using telemetry recommendations (v0.9+) */
   learnedRoutingHints?: boolean;
   learnedMinSamples?: number;
+  /**
+   * Optional local_fast one-shot classify when heuristics are uncertain.
+   * - off (default): heuristics only
+   * - shadow: call local_fast, log disagreements, keep heuristic route
+   * - on: merge LLM fields into analysis (fail-soft vs premium)
+   */
+  llmClassify?: "off" | "shadow" | "on";
 }
 
 export interface TelemetryConfig {

@@ -59,7 +59,8 @@
     "probeCacheTtlMs": 30000,
     "probeOnDryRun": false,
     "learnedRoutingHints": true,
-    "learnedMinSamples": 5
+    "learnedMinSamples": 5,
+    "llmClassify": "off"
   },
   "telemetry": {
     "enabled": true,
