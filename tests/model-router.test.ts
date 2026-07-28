@@ -95,6 +95,19 @@ describe("Maestro router", () => {
     expect(decision.tier).toBe("premium");
   });
 
+  it("fail-soft: testing with tool catalog stays off premium", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({ userPrompt: "testing", tools });
+    const decision = routeTask({
+      analysis,
+      config: config(),
+      userPrompt: "testing",
+    });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(decision.tier).not.toBe("premium");
+    expect(["local_fast", "local_strong"]).toContain(decision.tier);
+  });
+
   it("honors --model-tier override", () => {
     const decision = route("anything", { modelTier: "hosted_oss" });
     expect(decision.tier).toBe("hosted_oss");

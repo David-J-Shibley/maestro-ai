@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.5** adds evidence-based routing (telemetry hints on by default), harness profiles, premium pool failover, session sticky tiers, `/status`, and plain-reply retries. v1.2.x hardened Claude Code streaming + chitchat tool omission.
+**v1.5.1** fail-softs routing: ambiguous/short asks stay local (no Bedrock on `testing`). **v1.5** adds evidence-based routing, harness profiles, premium pool failover, sticky sessions, `/status`, and plain-reply retries.
 
 ## Quick start (new machine)
 

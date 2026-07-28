@@ -62,13 +62,59 @@ const TOOL_TASK_TYPES: TaskType[] = [
 const TOOL_ACTION_RE =
   /\b(list|read|write|edit|create|delete|run|bash|execute|search|find|open|fix|implement|debug|refactor|test|commit|push|install|mkdir|rm\b|mv\b|cp\b|cat\b|grep|curl|wget)\b/i;
 
+/** Paths, filenames, or other concrete tool targets. */
+const TOOL_TARGET_RE =
+  /(?:\/[\w.-]+)+|\b[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|md|json|ya?ml|toml|css|scss|html|sh|sql|env)\b|`[^`\n]+`|\b(?:file|files|directory|folder|repo|codebase|package\.json|src\/|tests?\/)\b/i;
+
+const CODE_FENCE_RE = /```/;
+
+/** Imperative strong enough to justify tools without relying on task-type alone. */
+export function hasStrongToolEvidence(ask: string): boolean {
+  const t = ask.trim();
+  if (!t) return false;
+  const hasVerb = TOOL_ACTION_RE.test(t);
+  const hasTarget = TOOL_TARGET_RE.test(t) || CODE_FENCE_RE.test(t);
+  if (hasVerb && hasTarget) return true;
+  // Multi-word imperative without extension still counts (e.g. "list open files")
+  if (hasVerb && t.split(/\s+/).length >= 4) return true;
+  return false;
+}
+
 /** Pure chitchat — tools may be present in the harness payload but aren't needed. */
 export function isTrivialChitchat(prompt: string): boolean {
   const t = prompt.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
-  if (!t || t.length > 48) return false;
-  return /^(hi|hello|hey|yo|sup|howdy|hiya|thanks|thank you|thx|ty|ok|okay|k|yes|no|yep|nope|cool|great|good (morning|afternoon|evening|night)|what's up|whats up|how are you)$/i.test(
-    t
-  );
+  if (!t || t.length > 80) return false;
+  // Exact short greetings / acks
+  if (
+    /^(hi|hello|hey|yo|sup|howdy|hiya|thanks|thank you|thx|ty|ok|okay|k|yes|no|yep|nope|cool|great|good (morning|afternoon|evening|night)|what's up|whats up|how are you)$/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  // Soft status / ping phrases (not real work)
+  if (
+    /^(hi|hello|hey)\b.{0,40}$/i.test(t) &&
+    !TOOL_ACTION_RE.test(t) &&
+    !/\b(bug|error|file|code|implement|refactor|debug)\b/i.test(t)
+  ) {
+    // "hi are you working", "hello there", "hey you up?"
+    return true;
+  }
+  if (
+    /^(testing|test|ping|poke|you (there|up|working)|are you (there|up|working|ok|okay)|still (there|working)|status check)\b[.!?]*$/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function hasKeyword(haystack: string, keyword: string): boolean {
+  // Word-boundary match so "testing" does not hit keyword "test".
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(haystack);
 }
 
 /**
@@ -181,10 +227,10 @@ function detectTaskType(prompt: string, hints?: TaskHints): TaskType {
   if (/\b(rewrite|rephrase|paraphrase)\b/.test(lower)) return "rewriting";
   if (/\b(extract|parse|pull out)\b/.test(lower)) return "extraction";
   if (/\b(classify|categorize|label)\b/.test(lower)) return "classification";
-  if (/\b(format|markdown|yaml|json schema)\b/.test(lower)) return "formatting";
+  if (/\b((re)?format|markdown|yaml|json schema|csv)\b/.test(lower)) return "formatting";
   if (isHarnessMetaAsk(prompt)) return "simple_answer";
-  if (SIMPLE_KEYWORDS.some((k) => lower.includes(k))) return "simple_answer";
-  if (CODE_KEYWORDS.some((k) => lower.includes(k))) return "code_edit";
+  if (SIMPLE_KEYWORDS.some((k) => hasKeyword(lower, k))) return "simple_answer";
+  if (CODE_KEYWORDS.some((k) => hasKeyword(lower, k))) return "code_edit";
 
   return "unknown";
 }
@@ -240,8 +286,8 @@ function detectRisk(prompt: string, hints?: TaskHints): RiskLevel {
   if (hints?.risk) return hints.risk;
 
   const lower = prompt.toLowerCase();
-  if (HIGH_RISK_KEYWORDS.some((k) => lower.includes(k))) return "high";
-  if (CODE_KEYWORDS.some((k) => lower.includes(k))) return "medium";
+  if (HIGH_RISK_KEYWORDS.some((k) => hasKeyword(lower, k))) return "high";
+  if (CODE_KEYWORDS.some((k) => hasKeyword(lower, k))) return "medium";
   return "low";
 }
 
@@ -339,7 +385,7 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
   };
 }
 
-const DEFAULT_TOOL_NEED_THRESHOLD = 0.55;
+const DEFAULT_TOOL_NEED_THRESHOLD = 0.6;
 
 export function computeToolNeedScore(opts: {
   userPrompt: string;
@@ -355,41 +401,45 @@ export function computeToolNeedScore(opts: {
   const ask = opts.userPrompt;
   const recent = opts.recentToolTurns ?? 0;
 
-  // Resume / recap meta — never need tools.
+  // Resume / recap / soft pings — never need tools.
   if (isHarnessMetaAsk(ask) && !isTrivialChitchat(ask)) return 0;
 
-  // Pure greetings / thanks — never need tools. Mid-session "ok"/"yes" can.
   if (isTrivialChitchat(ask)) {
     const t = ask.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
-    const pureGreeting =
-      /^(hi|hello|hey|yo|sup|howdy|hiya|thanks|thank you|thx|ty|good (morning|afternoon|evening|night)|what's up|whats up|how are you)$/i.test(
-        t
-      );
-    if (pureGreeting || recent === 0) return 0;
+    // Mid-agent bare acks may continue a tool loop; other pings never need tools.
+    const midSessionAck = /^(ok|okay|k|yes|yep|nope|cool|great)$/i.test(t);
+    if (!midSessionAck || recent === 0) return 0;
   }
 
-  let score = 0.2;
-  if (TOOL_TASK_TYPES.includes(opts.taskType)) score += 0.45;
-  if (TOOL_ACTION_RE.test(ask)) score += 0.35;
-  if (
-    opts.taskType !== "simple_answer" &&
-    opts.taskType !== "formatting" &&
-    opts.taskType !== "classification" &&
-    opts.taskType !== "summarization" &&
-    opts.taskType !== "rewriting"
-  ) {
+  // Evidence-based scoring — task type alone must not clear the threshold.
+  let score = 0;
+  const strong = hasStrongToolEvidence(ask);
+  const weakVerb = !strong && TOOL_ACTION_RE.test(ask);
+  const hasTarget = TOOL_TARGET_RE.test(ask) || CODE_FENCE_RE.test(ask);
+
+  if (strong) score += 0.55;
+  else if (weakVerb) score += 0.2;
+  if (hasTarget) score += 0.15;
+
+  // Task type is a mild hint only when paired with some verb/target evidence.
+  if (TOOL_TASK_TYPES.includes(opts.taskType) && (strong || weakVerb || hasTarget)) {
     score += 0.15;
   }
 
-  // Mid-agent session: bias tools on for short continuations ("ok", "continue").
+  // Mid-agent session: short continuations keep tools on.
   if (recent > 0) {
-    score += Math.min(0.4, 0.2 + recent * 0.05);
-    if (ask.trim().length <= 40 && !TOOL_ACTION_RE.test(ask)) {
-      score = Math.max(score, 0.7);
+    score += Math.min(0.35, 0.15 + recent * 0.04);
+    if (ask.trim().length <= 40 && (strong || midSessionContinuation(ask))) {
+      score = Math.max(score, 0.65);
     }
   }
 
   return Math.max(0, Math.min(1, score));
+}
+
+function midSessionContinuation(ask: string): boolean {
+  const t = ask.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
+  return /^(ok|okay|k|yes|yep|continue|go on|keep going|next|proceed)\b/.test(t);
 }
 
 /** Count tool_use / tool_result activity in the last `window` messages. */
