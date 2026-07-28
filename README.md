@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.2** hardens the transparent proxy for Claude Code: live token streaming, idle keepalives, and **native Anthropic tool passthrough** so Write/Bash/etc. execute for real. v1.1 added the proxy itself plus MCP workflows, probe caching, and stronger secret-pattern privacy.
+**v1.2.1** keeps Claude Code chitchat on local tiers (tool catalogs don’t force premium) and strips fake `Write`/`Memory` tool JSON into plain replies. v1.2 added live streaming, keepalives, and native Anthropic tool passthrough; v1.1 added the proxy and MCP workflows.
 
 ## Quick start (new machine)
 

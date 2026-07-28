@@ -165,6 +165,8 @@ See `.env.example` in the repo or `~/.maestro-ai/.env.example` after init:
 | Maestro proxy silent crash | Use v1.1+ (request logging + crash guards); check stderr for `[maestro-proxy]` |
 | Claude Code “Stream ended without receiving any events” | Use v1.2+ (native tool passthrough + truncated-stream handling); don’t cap `--max-tier hosted_oss` for huge tool catalogs unless Bedrock SSO is up |
 | Bedrock `Unexpected role "system"` | Use v1.2+ (system roles lifted to top-level `system`) |
+| Claude Code shows `{"name":"Memory"…}` / fake Write JSON on `hi` | Use v1.2.1+ (plain-reply coercion); restart proxy from latest build |
+| `hi` routes to Bedrock / AWS SSO errors | Use v1.2.1+ (tools omittable for chitchat); or `--max-tier hosted_oss --prefer-local` |
 | Claude Code resets on long tasks (`ECONNRESET`) | Restart proxy from latest build — SSE opens immediately with `ping` heartbeats while routing |
 
 ## Custom config

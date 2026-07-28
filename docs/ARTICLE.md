@@ -305,7 +305,7 @@ For whole-session routing without MCP tool calls, run:
 maestro proxy --port 4100 --prefer-local
 ```
 
-Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock. From **v1.2**, Anthropic tools pass through natively and tokens stream live.
+Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock. From **v1.2**, Anthropic tools pass through natively and tokens stream live. **v1.2.1** keeps chitchat/recap turns on local models and coerces fake tool JSON into plain text.
 
 ## Lessons learned
 
