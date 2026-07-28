@@ -41,6 +41,7 @@ export {
   analyzeTask,
   extractSystemPrompt,
   extractUserPrompt,
+  extractLatestUserPrompt,
   hashPrompt,
 } from "./analyzer/task-analyzer.js";
 

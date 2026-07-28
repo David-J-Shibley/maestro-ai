@@ -245,6 +245,31 @@ describe("maestro proxy", () => {
   });
 
   it("passes Anthropic tools natively and streams tool_use SSE", async () => {
+    vi.mocked(dryRunRoute).mockResolvedValueOnce({
+      analysis: {
+        taskType: "code_edit",
+        difficulty: "medium",
+        riskLevel: "medium",
+        requiresToolUse: true,
+        requiresCodeReasoning: true,
+        requiresLongContext: false,
+        requiresStructuredOutput: false,
+        estimatedComplexityScore: 3,
+        confidence: 0.9,
+        signals: ["tools_needed"],
+        promptHash: "x",
+      },
+      routing: {
+        tier: "local_strong",
+        model: "glm",
+        provider: "litellm",
+        baseUrl: "http://localhost:4000/v1",
+        reason: "test",
+        fallbackTier: null,
+        debug: [],
+      },
+    } as Awaited<ReturnType<typeof dryRunRoute>>);
+
     vi.mocked(anthropicMessagesStream).mockImplementationOnce(async function* () {
       yield {
         event: "message_start",
@@ -344,6 +369,31 @@ describe("maestro proxy", () => {
   });
 
   it("returns Anthropic tool_use on non-stream completions", async () => {
+    vi.mocked(dryRunRoute).mockResolvedValueOnce({
+      analysis: {
+        taskType: "code_edit",
+        difficulty: "medium",
+        riskLevel: "medium",
+        requiresToolUse: true,
+        requiresCodeReasoning: true,
+        requiresLongContext: false,
+        requiresStructuredOutput: false,
+        estimatedComplexityScore: 3,
+        confidence: 0.9,
+        signals: ["tools_needed"],
+        promptHash: "x",
+      },
+      routing: {
+        tier: "local_strong",
+        model: "glm",
+        provider: "litellm",
+        baseUrl: "http://localhost:4000/v1",
+        reason: "test",
+        fallbackTier: null,
+        debug: [],
+      },
+    } as Awaited<ReturnType<typeof dryRunRoute>>);
+
     vi.mocked(anthropicMessagesCompletion).mockResolvedValueOnce({
       id: "msg_write",
       type: "message",

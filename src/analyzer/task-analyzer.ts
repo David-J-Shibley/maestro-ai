@@ -49,6 +49,45 @@ const SIMPLE_UI_PATTERNS = [
   /\bdemonstration\s+page\b/,
 ];
 
+const TOOL_TASK_TYPES: TaskType[] = [
+  "code_edit",
+  "debugging",
+  "refactoring",
+  "architecture",
+  "multi_step",
+  "tool_use",
+];
+
+/** Verbs that imply the harness should actually call a tool. */
+const TOOL_ACTION_RE =
+  /\b(list|read|write|edit|create|delete|run|bash|execute|search|find|open|fix|implement|debug|refactor|test|commit|push|install|mkdir|rm\b|mv\b|cp\b|cat\b|grep|curl|wget)\b/i;
+
+/** Pure chitchat — tools may be present in the harness payload but aren't needed. */
+export function isTrivialChitchat(prompt: string): boolean {
+  const t = prompt.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
+  if (!t || t.length > 48) return false;
+  return /^(hi|hello|hey|yo|sup|howdy|hiya|thanks|thank you|thx|ty|ok|okay|k|yes|no|yep|nope|cool|great|good (morning|afternoon|evening|night)|what's up|whats up|how are you)$/i.test(
+    t
+  );
+}
+
+/**
+ * Claude Code / harness meta prompts (resume, recap) — should not escalate to premium
+ * just because the tool catalog is attached.
+ */
+export function isHarnessMetaAsk(prompt: string): boolean {
+  if (isTrivialChitchat(prompt)) return true;
+  const t = prompt.trim().toLowerCase();
+  if (t.length > 500) return false;
+  return (
+    /^the user stepped away\b/i.test(t) ||
+    (/\bis coming back\b/i.test(t) && /\brecap\b/i.test(t)) ||
+    /^recap\b/i.test(t) ||
+    /\brecap (the )?(conversation|session|chat)\b/i.test(t) ||
+    /^summarize (what we|the conversation|this session)\b/i.test(t)
+  );
+}
+
 /** Signals of real system-design work — not demo pages or router showcases. */
 const SYSTEM_ARCHITECTURE_SIGNALS = [
   /\bsystem\s+design\b/,
@@ -143,6 +182,7 @@ function detectTaskType(prompt: string, hints?: TaskHints): TaskType {
   if (/\b(extract|parse|pull out)\b/.test(lower)) return "extraction";
   if (/\b(classify|categorize|label)\b/.test(lower)) return "classification";
   if (/\b(format|markdown|yaml|json schema)\b/.test(lower)) return "formatting";
+  if (isHarnessMetaAsk(prompt)) return "simple_answer";
   if (SIMPLE_KEYWORDS.some((k) => lower.includes(k))) return "simple_answer";
   if (CODE_KEYWORDS.some((k) => lower.includes(k))) return "code_edit";
 
@@ -209,31 +249,47 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
   const signals: string[] = [];
   const userPrompt = input.userPrompt ?? "";
   const systemPrompt = input.systemPrompt ?? "";
+  // Difficulty/task type should follow the *user's ask*, not the tool catalog size.
+  // Harnesses like Claude Code attach 50–100 tools on every turn (including "hi").
   const combined = `${systemPrompt}\n${userPrompt}`;
+  const promptTokens = estimateTokens(combined);
 
   const toolCount = Array.isArray(input.tools) ? input.tools.length : 0;
   const toolCatalogTokens =
     toolCount > 0
       ? estimateTokens(JSON.stringify(input.tools).slice(0, 400_000))
       : 0;
-  const contextTokens =
-    input.contextSizeTokens ?? estimateTokens(combined) + toolCatalogTokens;
+  const contextTokens = input.contextSizeTokens ?? promptTokens;
+  const requestTokens = promptTokens + toolCatalogTokens;
   const taskType = detectTaskType(userPrompt, input.taskHints);
   signals.push(`taskType=${taskType}`);
 
-  const requiresToolUse =
-    input.taskHints?.requiresTools ?? toolCount > 0;
-  if (requiresToolUse) signals.push("tools_present");
+  const toolsAvailable = toolCount > 0;
+  if (toolsAvailable) signals.push(`tools_available=${toolCount}`);
   if (toolCount >= 20) signals.push(`large_tool_catalog=${toolCount}`);
+
+  // Tools *present* ≠ tools *needed*. Claude Code always sends its catalog.
+  const requiresToolUse =
+    input.taskHints?.requiresTools ??
+    (toolsAvailable &&
+      !isHarnessMetaAsk(userPrompt) &&
+      (TOOL_TASK_TYPES.includes(taskType) ||
+        TOOL_ACTION_RE.test(userPrompt) ||
+        (taskType !== "simple_answer" &&
+          taskType !== "formatting" &&
+          taskType !== "classification")));
+  if (requiresToolUse) signals.push("tools_needed");
+  else if (toolsAvailable) signals.push("tools_omittable");
 
   const requiresStructuredOutput =
     input.taskHints?.requiresStructuredOutput ??
     Boolean(input.responseSchema);
   if (requiresStructuredOutput) signals.push("structured_output");
 
+  // Long-context for *routing*: prompt size, or tool catalog only when tools are needed.
   const requiresLongContext =
     input.taskHints?.requiresLongContext ??
-    (contextTokens > 32_000 || toolCount >= 20);
+    (contextTokens > 32_000 || (requiresToolUse && requestTokens > 32_000));
   if (requiresLongContext) signals.push("long_context");
 
   const requiresCodeReasoning =
@@ -279,6 +335,17 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
 
 export function hashPrompt(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+/** Latest user turn only — better for Claude Code / multi-turn harness routing. */
+export function extractLatestUserPrompt(
+  messages: { role: string; content: string }[]
+): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role === "user") return m.content ?? "";
+  }
+  return "";
 }
 
 export function extractUserPrompt(messages: { role: string; content: string }[]): string {
