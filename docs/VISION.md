@@ -118,6 +118,11 @@ Claude Code agent loops work through the proxy:
 - Live upstream token streaming + idle keepalives
 - Large tool catalogs route toward longer-context tiers; truncated upstream streams surface clear errors
 
+### v1.2.1 — Chitchat routing + plain replies ✅
+
+- Tool catalogs attached on every Claude Code turn are omittable for `hi` / resume-recap asks (no premium escalation)
+- Fake tool-call text (`Write` / `Memory` JSON) coerced to natural language on plain turns
+
 ### v2.0 — Self-Learning
 
 Telemetry becomes training data:

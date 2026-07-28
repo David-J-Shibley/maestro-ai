@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-07-27
+
+### Fixed
+- **Claude Code chitchat / resume turns** no longer escalate to premium just because the harness attaches a large tool catalog — route on the latest human ask and treat tools as omittable for `hi` / recap-style prompts.
+- **Fake tool roleplay** (`Write` / `Memory` JSON as assistant text) is coerced into a normal plain-text reply (or a short fallback greeting) when tools were intentionally omitted.
+
+### Changed
+- Difficulty / tool-need analysis follows the *user’s ask*, not catalog size; `tools_present` ≠ `tools_needed`.
+
+[1.2.1]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.2.1
+
 ## [1.2.0] - 2026-07-27
 
 ### Added
