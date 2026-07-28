@@ -144,15 +144,47 @@ describe("TaskAnalyzer", () => {
       recentToolTurns: 3,
     });
     expect(analysis.requiresToolUse).toBe(true);
-    expect(analysis.toolNeedScore).toBeGreaterThanOrEqual(0.55);
+    expect(analysis.toolNeedScore).toBeGreaterThanOrEqual(0.6);
   });
 
-  it("needs tools for explicit read/write asks", () => {
+  it("treats short status pings as chitchat (not code_edit via 'test')", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    for (const userPrompt of [
+      "testing",
+      "hi are you working",
+      "are you working",
+      "hello there",
+    ]) {
+      const analysis = analyzeTask({ userPrompt, tools });
+      expect(analysis.requiresToolUse).toBe(false);
+      expect(analysis.requiresLongContext).toBe(false);
+      expect(analysis.taskType).toBe("simple_answer");
+      expect(["easy"]).toContain(analysis.difficulty);
+    }
+  });
+
+  it("still treats real test asks as code work", () => {
     const analysis = analyzeTask({
-      userPrompt: "read package.json and summarize the scripts",
-      tools: [{ name: "Read" }],
+      userPrompt: "write a unit test for the router",
+      tools: [{ name: "Write" }],
     });
+    expect(analysis.taskType).toBe("code_edit");
     expect(analysis.requiresToolUse).toBe(true);
-    expect(analysis.toolNeedScore).toBeGreaterThanOrEqual(0.55);
+  });
+
+  it("does not treat bare code keywords without targets as needing tools", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({
+      userPrompt: "what is a javascript function",
+      tools,
+    });
+    expect(analysis.requiresToolUse).toBe(false);
+  });
+
+  it("fail-soft: testing with tools stays omittable and not code_edit", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({ userPrompt: "testing", tools });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(analysis.toolNeedScore).toBe(0);
   });
 });

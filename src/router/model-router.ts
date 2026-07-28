@@ -130,10 +130,12 @@ export function routeTask(input: RouteInput): RoutingDecision {
     reasons.push(`default tier: ${tier}`);
   }
 
-  // Agent harness turns (Claude Code etc.) need reliable structured tool_calls.
+  // Agent harness turns need reliable tool_calls — but fail soft on weak evidence.
   if (analysis.requiresToolUse) {
+    const strongTools = analysis.toolNeedScore >= 0.7;
     const toolFloor: ModelTier =
-      analysis.requiresCodeReasoning || analysis.difficulty !== "easy"
+      strongTools &&
+      (analysis.requiresCodeReasoning || analysis.difficulty !== "easy")
         ? "hosted_oss"
         : "local_strong";
     const floorIdx = TIER_ORDER.indexOf(toolFloor);
@@ -232,7 +234,12 @@ export function routeTask(input: RouteInput): RoutingDecision {
     if (
       suggestion &&
       shouldApplyLearnedHint(tier, suggestion, "medium") &&
-      tierMeetsTask(analysis, suggestion.tier)
+      tierMeetsTask(analysis, suggestion.tier) &&
+      // Fail soft: don't learn-nudge to premium on weak / easy asks.
+      !(
+        suggestion.tier === "premium" &&
+        (analysis.difficulty === "easy" || analysis.toolNeedScore < 0.7)
+      )
     ) {
       pushDebug(
         debug,
@@ -267,15 +274,41 @@ export function routeTask(input: RouteInput): RoutingDecision {
   return decision;
 }
 
+/**
+ * Premium requires strong evidence. Wrong → local/hosted; never wrong → Bedrock.
+ * Keyword collisions and harness tool catalogs must not trip this alone.
+ */
 function shouldUsePremium(analysis: TaskAnalysis): boolean {
-  return (
-    analysis.difficulty === "hard" ||
-    analysis.riskLevel === "high" ||
-    (analysis.requiresToolUse && analysis.requiresCodeReasoning) ||
-    analysis.requiresLongContext ||
-    analysis.taskType === "architecture" ||
-    analysis.taskType === "multi_step"
-  );
+  const strongTools = analysis.toolNeedScore >= 0.7;
+
+  // Affirmative risk / architecture signals — these are not fragile substring traps.
+  if (analysis.riskLevel === "high") return true;
+  if (analysis.taskType === "architecture") return true;
+  if (analysis.taskType === "multi_step") return true;
+
+  // Hard difficulty needs decent confidence (unknown softens confidence).
+  if (analysis.difficulty === "hard" && analysis.confidence >= 0.65) return true;
+
+  // Long context alone is not enough (tool catalogs inflate request size).
+  if (
+    analysis.requiresLongContext &&
+    strongTools &&
+    (analysis.difficulty !== "easy" || analysis.requiresCodeReasoning)
+  ) {
+    return true;
+  }
+
+  // Tool + code work only when tool-need evidence is strong.
+  if (
+    analysis.requiresToolUse &&
+    analysis.requiresCodeReasoning &&
+    strongTools &&
+    analysis.confidence >= 0.7
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function shouldUseHostedOss(analysis: TaskAnalysis, preferLocal: boolean): boolean {
