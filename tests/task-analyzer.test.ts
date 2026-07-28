@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeTask,
+  hasStrongToolEvidence,
   isHarnessMetaAsk,
   isTrivialChitchat,
 } from "../src/analyzer/task-analyzer.js";
@@ -212,5 +213,30 @@ describe("TaskAnalyzer", () => {
     const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
     const analysis = analyzeTask({ userPrompt: long, tools });
     expect(analysis.requiresToolUse).toBe(false);
+  });
+
+  it("treats look/explore-the-repo asks as needing tools", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    for (const userPrompt of [
+      "look in the repo to better understand the project",
+      "look at the codebase",
+      "explore the repo",
+      "that is essentially it. you can look in the repo to better understand the project",
+    ]) {
+      const analysis = analyzeTask({ userPrompt, tools });
+      expect(analysis.requiresToolUse, userPrompt).toBe(true);
+      expect(hasStrongToolEvidence(userPrompt), userPrompt).toBe(true);
+    }
+  });
+
+  it("keeps tools required when recent tool turns are in progress", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({
+      userPrompt:
+        "Idk, I just haven't seen another tool that intelligently routes prompts",
+      tools,
+      recentToolTurns: 2,
+    });
+    expect(analysis.requiresToolUse).toBe(true);
   });
 });

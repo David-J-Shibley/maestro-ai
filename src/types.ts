@@ -255,6 +255,12 @@ export interface RoutedLLMCallInput {
   modelTier?: ModelTier;
   /** CLI/runtime overrides */
   overrides?: RouterOverrides;
+  /**
+   * When set, used instead of counting tool turns from `messages`.
+   * The Claude Code proxy routes on a single ask message but still needs
+   * mid-agent tool-loop bias from the full conversation.
+   */
+  recentToolTurns?: number;
 }
 
 export interface LLMUsage {

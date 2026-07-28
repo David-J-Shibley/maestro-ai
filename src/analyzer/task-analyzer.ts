@@ -58,13 +58,23 @@ const TOOL_TASK_TYPES: TaskType[] = [
   "tool_use",
 ];
 
-/** Verbs that imply the harness should actually call a tool. */
-const TOOL_ACTION_RE =
+/** Hard verbs that usually mean “use a tool now”. */
+const HARD_TOOL_ACTION_RE =
   /\b(list|read|write|edit|create|delete|run|bash|execute|search|find|open|fix|implement|debug|refactor|test|commit|push|install|mkdir|rm\b|mv\b|cp\b|cat\b|grep|curl|wget)\b/i;
+
+/** Softer explore verbs — only strong when paired with a concrete target. */
+const SOFT_TOOL_ACTION_RE =
+  /\b(look|inspect|explore|browse|examine|review|scan|check)\b/i;
+
+/** Any tool-ish verb (hard or soft). */
+const TOOL_ACTION_RE = new RegExp(
+  `${HARD_TOOL_ACTION_RE.source}|${SOFT_TOOL_ACTION_RE.source}`,
+  "i"
+);
 
 /** Paths, filenames, or other concrete tool targets. */
 const TOOL_TARGET_RE =
-  /(?:\/[\w.-]+)+|\b[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|md|json|ya?ml|toml|css|scss|html|sh|sql|env)\b|`[^`\n]+`|\b(?:file|files|directory|folder|repo|codebase|package\.json|src\/|tests?\/)\b/i;
+  /(?:\/[\w.-]+)+|\b[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|md|json|ya?ml|toml|css|scss|html|sh|sql|env)\b|`[^`\n]+`|\b(?:file|files|directory|folder|repo|repository|codebase|project|package\.json|src\/|tests?\/)\b/i;
 
 const CODE_FENCE_RE = /```/;
 
@@ -72,11 +82,14 @@ const CODE_FENCE_RE = /```/;
 export function hasStrongToolEvidence(ask: string): boolean {
   const t = ask.trim();
   if (!t) return false;
-  const hasVerb = TOOL_ACTION_RE.test(t);
   const hasTarget = TOOL_TARGET_RE.test(t) || CODE_FENCE_RE.test(t);
-  if (hasVerb && hasTarget) return true;
-  // Multi-word imperative without extension still counts (e.g. "list open files")
-  if (hasVerb && t.split(/\s+/).length >= 4) return true;
+  const hardVerb = HARD_TOOL_ACTION_RE.test(t);
+  const softVerb = SOFT_TOOL_ACTION_RE.test(t);
+  if (hardVerb && hasTarget) return true;
+  // Multi-word hard imperative without extension (e.g. "list open files")
+  if (hardVerb && t.split(/\s+/).length >= 4) return true;
+  // "look in the repo" / "explore the codebase" — soft verb needs a target
+  if (softVerb && hasTarget) return true;
   return false;
 }
 
@@ -431,12 +444,15 @@ export function computeToolNeedScore(opts: {
     score += 0.15;
   }
 
-  // Mid-agent session: short continuations keep tools on.
+  // Mid-agent session: keep tools on while a tool loop is in flight.
   if (recent > 0) {
     score += Math.min(0.35, 0.15 + recent * 0.04);
     if (ask.trim().length <= 40 && (strong || midSessionContinuation(ask))) {
       score = Math.max(score, 0.65);
     }
+    // Any recent tool_use / tool_result means Claude Code is mid-loop —
+    // never drop below threshold even if the routed ask is conversational.
+    score = Math.max(score, 0.7);
   }
 
   return Math.max(0, Math.min(1, score));
