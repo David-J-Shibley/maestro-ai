@@ -1,5 +1,6 @@
 import {
   analyzeTask,
+  countRecentToolTurns,
   extractLatestUserPrompt,
   extractSystemPrompt,
   extractUserPrompt,
@@ -7,6 +8,11 @@ import {
 } from "./analyzer/task-analyzer.js";
 import { loadConfig } from "./config/load-config.js";
 import { getPrimaryEndpoint } from "./config/tier-config.js";
+import {
+  isPremiumPoolRotationError,
+  listPremiumEndpoints,
+  orderPremiumEndpoints,
+} from "./config/premium-pool.js";
 import { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-evaluator.js";
 import { chatCompletion, DEFAULT_MAX_TOKENS, ProviderError } from "./provider/openai-compatible.js";
 import { probeAllTiers, type TierProbeStatus } from "./provider/probe.js";
@@ -82,6 +88,7 @@ export async function routedLLMCall(
     tools: input.tools,
     responseSchema: input.responseSchema,
     taskHints: input.taskHints,
+    recentToolTurns: countRecentToolTurns(input.messages),
   });
 
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
@@ -240,6 +247,32 @@ export async function routedLLMCall(
           : true);
 
       if (shouldEscalate) {
+        // Premium pool rotation before leaving the premium tier.
+        if (
+          currentTier === "premium" &&
+          isPremiumPoolRotationError(err) &&
+          (effectiveConfig.premiumPool?.length ?? 0) > 0
+        ) {
+          const pool = listPremiumEndpoints(effectiveConfig);
+          const ordered = orderPremiumEndpoints(pool);
+          const failedModel = endpoint.model;
+          const nextEp = ordered.find((ep) => ep.model !== failedModel);
+          if (nextEp) {
+            // Mutate effective endpoint for this tier for remaining attempts.
+            const status = statuses.get("premium");
+            if (status) {
+              status.effective = {
+                tier: "premium",
+                endpoint: nextEp,
+                source: "premium_pool",
+                fallbackReason: `premium rotated to pool (${nextEp.provider}/${nextEp.model})`,
+              };
+            }
+            tierAttemptCount = 0;
+            continue;
+          }
+        }
+
         const next = nextTier(currentTier);
         if (next && next !== currentTier) {
           if (
@@ -294,6 +327,9 @@ export async function routedLLMCall(
     mode: activeMode,
     sessionId,
     userFeedback: overrides?.userFeedback,
+    difficulty: analysis.difficulty,
+    requiresToolUse: analysis.requiresToolUse,
+    outcome: "ok",
   });
 
   return {
@@ -340,6 +376,7 @@ export async function dryRunRoute(
     tools: input.tools,
     responseSchema: input.responseSchema,
     taskHints: input.taskHints,
+    recentToolTurns: countRecentToolTurns(input.messages),
   });
 
   let unavailable = new Set<ModelTier>();

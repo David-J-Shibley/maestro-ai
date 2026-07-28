@@ -15,6 +15,7 @@ vi.mock("../src/routed-llm-call.js", () => ({
       difficulty: "easy",
       riskLevel: "low",
       requiresToolUse: false,
+      toolNeedScore: 0,
       requiresCodeReasoning: false,
       requiresLongContext: false,
       requiresStructuredOutput: false,
@@ -193,6 +194,13 @@ describe("maestro proxy", () => {
     const proxy = createProxyServer({ port: 0, host: "127.0.0.1" });
     proxies.push(proxy);
     const port = await listen(proxy);
+
+    const status = await fetch(`http://127.0.0.1:${port}/status`).then((r) =>
+      r.json()
+    );
+    expect(status.ok).toBe(true);
+    expect(status.profile).toBe("claude-code");
+    expect(Array.isArray(status.recentRoutes)).toBe(true);
 
     const models = await fetch(`http://127.0.0.1:${port}/v1/models`).then((r) => r.json());
     const ids = (models.data as Array<{ id: string }>).map((m) => m.id);

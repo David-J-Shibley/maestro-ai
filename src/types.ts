@@ -44,6 +44,13 @@ export interface TaskAnalysisInput {
   responseSchema?: Record<string, unknown>;
   contextSizeTokens?: number;
   taskHints?: TaskHints;
+  /**
+   * Count of recent assistant tool_use / user tool_result turns in the conversation.
+   * Biases tool-need upward for mid-agent “ok continue” style asks.
+   */
+  recentToolTurns?: number;
+  /** Score threshold for requiresToolUse (default 0.55). */
+  toolNeedThreshold?: number;
 }
 
 export interface TaskAnalysis {
@@ -51,6 +58,8 @@ export interface TaskAnalysis {
   difficulty: TaskDifficulty;
   riskLevel: RiskLevel;
   requiresToolUse: boolean;
+  /** 0–1 score; requiresToolUse is score >= threshold. */
+  toolNeedScore: number;
   requiresCodeReasoning: boolean;
   requiresLongContext: boolean;
   requiresStructuredOutput: boolean;
@@ -106,6 +115,8 @@ export interface SessionPolicy {
   maxTier?: ModelTier;
   budgetUsd?: number;
   alwaysPreferLocal?: boolean;
+  /** Prefer this tier for easy / tools-omittable turns (proxy sticky routing). */
+  stickyTier?: ModelTier;
 }
 
 export interface RouterOverrides {
@@ -185,7 +196,7 @@ export interface RouterConfig {
   models: Record<ModelTier, TierModelConfig>;
   routing: RoutingConfig;
   telemetry: TelemetryConfig;
-  /** Optional premium model pool for future rotation */
+  /** Alternate premium endpoints tried on auth/5xx before tier escalation */
   premiumPool?: ModelEndpointConfig[];
   /** Loaded from policy.json — declarative routing rules */
   policy?: RoutingPolicy | null;
@@ -200,10 +211,12 @@ export interface RoutingDecision {
   fallbackTier: ModelTier | null;
   requestedTier?: ModelTier;
   fallbackReason?: string;
-  endpointSource?: "primary" | "tier_fallback";
+  endpointSource?: "primary" | "tier_fallback" | "premium_pool";
   debug?: string[];
   /** Active routing mode for this decision */
   mode?: RoutingMode;
+  /** True when a learned telemetry hint changed the tier */
+  learnedHintApplied?: boolean;
   guardrails?: GuardrailResult[];
   budget?: {
     session_id: string;
@@ -313,6 +326,11 @@ export interface TelemetryRecord {
   mode?: RoutingMode;
   sessionId?: string;
   userFeedback?: string;
+  /** Proxy / plain-reply outcome for feedback loop */
+  outcome?: "ok" | "plain_coerced" | "plain_retry_ok" | "plain_fallback";
+  /** Difficulty / tool-need dimensions for richer learned cells */
+  difficulty?: TaskDifficulty;
+  requiresToolUse?: boolean;
 }
 
 export interface RoutedLLMCallResult {

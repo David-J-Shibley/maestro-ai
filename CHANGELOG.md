@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-28
+
+### Added
+- **Evidence-based routing (default on)** — `learnedRoutingHints: true` when telemetry readiness is met; cells keyed by taskType × difficulty × requiresToolUse × mode; coerce-rate findings in `maestro analyze`.
+- **Harness profiles** — `maestro proxy --profile claude-code|cursor|openai` (default `claude-code`).
+- **Premium pool rotation** — `premiumPool` in config; auth/5xx rotates within pool before tier escalation; probe includes pool endpoints.
+- **Outcome feedback** — proxy logs `plain_coerced` / `plain_retry_ok` / `plain_fallback`; `POST /v1/feedback`.
+- **Operator status** — `GET /status` with recent route ring buffer; `--quiet` for quieter logs.
+- **Session sticky routing** — easy / tools-omittable turns prefer last local tier for the session (30m TTL).
+- **Plain-reply retry** — one upstream retry with a stronger system nudge before fallback greeting.
+- **Tool-need score** — `toolNeedScore` + `recentToolTurns` history bias (mid-agent “ok continue” keeps tools).
+
+### Changed
+- Learned readiness default floor raised to 40 records.
+- Difficulty / tool-need analysis remains ask-centric; tool catalogs alone never force premium.
+
+[1.5.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.5.0
+
 ## [1.2.1] - 2026-07-27
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.2.1** keeps Claude Code chitchat on local tiers (tool catalogs don’t force premium) and strips fake `Write`/`Memory` tool JSON into plain replies. v1.2 added live streaming, keepalives, and native Anthropic tool passthrough; v1.1 added the proxy and MCP workflows.
+**v1.5** adds evidence-based routing (telemetry hints on by default), harness profiles, premium pool failover, session sticky tiers, `/status`, and plain-reply retries. v1.2.x hardened Claude Code streaming + chitchat tool omission.
 
 ## Quick start (new machine)
 

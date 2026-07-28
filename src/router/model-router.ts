@@ -25,6 +25,9 @@ import {
 import { tierMeetsTask } from "../routing/tier-fit.js";
 import { applyGuardrails } from "../routing/guardrails.js";
 import {
+  applyStickyTierPreference,
+} from "../proxy/session-sticky.js";
+import {
   shouldApplyLearnedHint,
   suggestTierFromTelemetry,
 } from "../routing/learned.js";
@@ -151,6 +154,20 @@ export function routeTask(input: RouteInput): RoutingDecision {
     reasons.push("preferLocal bumped easy low-risk task to local_strong");
   }
 
+  const sticky = session?.stickyTier;
+  if (sticky) {
+    const stickyResult = applyStickyTierPreference(tier, sticky, {
+      requiresToolUse: analysis.requiresToolUse,
+      difficulty: analysis.difficulty,
+      riskLevel: analysis.riskLevel,
+    });
+    if (stickyResult.applied) {
+      tier = stickyResult.tier;
+      reasons.push(`session stickyTier → ${tier}`);
+      pushDebug(debug, `sticky: preferred ${tier}`);
+    }
+  }
+
   const policyApplied = applyRoutingPolicy(
     tier,
     analysis,
@@ -200,11 +217,17 @@ export function routeTask(input: RouteInput): RoutingDecision {
     pushDebug(debug, `guardrail:${g.kind}:${g.action}: ${g.message}`);
   }
 
+  let learnedHintApplied = false;
   if (config.routing.learnedRoutingHints && config.telemetry.enabled) {
     const suggestion = suggestTierFromTelemetry(
       config.telemetry.logPath,
       analysis.taskType,
-      { minSamples: config.routing.learnedMinSamples ?? 5 }
+      {
+        minSamples: config.routing.learnedMinSamples ?? 5,
+        difficulty: analysis.difficulty,
+        requiresToolUse: analysis.requiresToolUse,
+        mode: activeMode,
+      }
     );
     if (
       suggestion &&
@@ -216,6 +239,7 @@ export function routeTask(input: RouteInput): RoutingDecision {
         `learned: telemetry suggests ${suggestion.tier} — ${suggestion.reason}`
       );
       tier = suggestion.tier;
+      learnedHintApplied = true;
     } else if (suggestion) {
       pushDebug(
         debug,
@@ -226,7 +250,7 @@ export function routeTask(input: RouteInput): RoutingDecision {
 
   for (const r of reasons) pushDebug(debug, `rule: ${r}`);
 
-  return buildDecision(
+  const decision = buildDecision(
     tier,
     config,
     analysis,
@@ -239,6 +263,8 @@ export function routeTask(input: RouteInput): RoutingDecision {
     modeConstraints,
     guardrails.results
   );
+  decision.learnedHintApplied = learnedHintApplied;
+  return decision;
 }
 
 function shouldUsePremium(analysis: TaskAnalysis): boolean {

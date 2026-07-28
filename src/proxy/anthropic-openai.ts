@@ -163,6 +163,10 @@ export const PLAIN_TEXT_ONLY_HINT =
   "Reply in plain natural language only. Do not call tools, do not emit tool-call JSON, " +
   "and do not write files. Just answer the user directly.";
 
+export const PLAIN_TEXT_RETRY_HINT =
+  "Your previous reply was invalid tool-call JSON. Reply in 1–2 sentences of plain English only. " +
+  "Do not emit JSON, do not call tools, do not write files.";
+
 /**
  * Collapse tool_use / tool_result history into short text so local models
  * don't imitate tool JSON when tools were intentionally omitted.
@@ -329,6 +333,16 @@ export function coercePlainAssistantText(text: string, fallback: string): string
     return fallback;
   }
   return t;
+}
+
+/** True when a plain-reply completion should be retried once before fallback. */
+export function needsPlainReplyRetry(rawText: string, fallback: string): boolean {
+  const trimmed = rawText.trim();
+  if (!trimmed) return true;
+  if (looksLikeFakeToolDump(trimmed)) return true;
+  const coerced = coercePlainAssistantText(trimmed, fallback);
+  // Coerced to empty/meta → fallback path; retry if dump-like or empty.
+  return coerced === fallback;
 }
 
 export function plainReplyFallback(ask: string): string {
