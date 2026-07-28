@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-07-28
+
+### Fixed
+- **Claude Code tool loops** — count recent tool turns from the full conversation (not just the ask-centric route message) so mid-agent follow-ups keep tools forwarded.
+- **“look in the repo”** and similar soft explore verbs now score as needing tools when paired with a concrete target.
+- **Harness meta** (suggestion / recap) always omits tools even when `recent_tools > 0` (avoids Ollama ECONNRESET on 92-tool catalogs).
+- **LiteLLM/GLM SSE sanitizer** — drop unsigned thinking monologue, dedupe frames, scrub `<|assistant|>` / `<|user|>` tokens from history and output, inject visible text before tool_use, and fall back on empty end_turn.
+- **Force tool use** when tools are needed (`tool_choice: any` + system nudge) so GLM cannot narrate “I’ll read the README” without emitting `tool_use`.
+
+[1.5.3]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.5.3
+
 ## [1.5.2] - 2026-07-28
 
 ### Fixed

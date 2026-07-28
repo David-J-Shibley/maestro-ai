@@ -88,7 +88,8 @@ export async function routedLLMCall(
     tools: input.tools,
     responseSchema: input.responseSchema,
     taskHints: input.taskHints,
-    recentToolTurns: countRecentToolTurns(input.messages),
+    recentToolTurns:
+      input.recentToolTurns ?? countRecentToolTurns(input.messages),
   });
 
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
@@ -376,7 +377,8 @@ export async function dryRunRoute(
     tools: input.tools,
     responseSchema: input.responseSchema,
     taskHints: input.taskHints,
-    recentToolTurns: countRecentToolTurns(input.messages),
+    recentToolTurns:
+      input.recentToolTurns ?? countRecentToolTurns(input.messages),
   });
 
   let unavailable = new Set<ModelTier>();

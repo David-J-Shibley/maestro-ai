@@ -444,6 +444,7 @@ describe("maestro proxy", () => {
     const msg = await res.json();
     expect(msg.stop_reason).toBe("tool_use");
     expect(msg.content).toEqual([
+      { type: "text", text: "Working on it…" },
       {
         type: "tool_use",
         id: "call_write",
