@@ -123,20 +123,15 @@ Claude Code agent loops work through the proxy:
 - Tool catalogs attached on every Claude Code turn are omittable for `hi` / resume-recap asks (no premium escalation)
 - Fake tool-call text (`Write` / `Memory` JSON) coerced to natural language on plain turns
 
-### v2.0 — Self-Learning
+### v1.5 — Evidence-based routing ✅
 
-Telemetry becomes training data:
+Telemetry becomes training data for routing nudges:
 
-| Prompt features | Difficulty | Model | Latency | Cost | Eval score | User rating |
-|-----------------|------------|-------|---------|------|------------|-------------|
+- Feature cells: taskType × difficulty × requiresToolUse × mode
+- Default `learnedRoutingHints: true` when readiness is met (overridable)
+- Harness profiles, premium pool rotation, session sticky tiers, `/status`, plain-reply retry, outcome feedback
 
-After sufficient volume, routing becomes **evidence-based**:
-
-- "Qwen succeeds on 94% of React refactors."
-- "Claude is worth the premium for architecture."
-- "Local Llama is fine for summarization."
-
-Deterministic rules remain the floor; learned weights sit on top.
+Deterministic rules remain the floor; learned weights sit on top. Online bandits / weight training remain future work.
 
 ## Defining capability: Explain Your Decision
 

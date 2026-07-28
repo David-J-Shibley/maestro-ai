@@ -25,7 +25,7 @@ export interface RoutingReport {
   requested_tier?: ModelTier;
   fallback_tier: ModelTier | null;
   fallback_reason?: string;
-  endpoint_source?: "primary" | "tier_fallback";
+  endpoint_source?: "primary" | "tier_fallback" | "premium_pool";
   budget?: RoutingDecision["budget"];
   analysis: TaskAnalysis;
   debug: string[];

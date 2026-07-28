@@ -42,7 +42,11 @@ export {
   extractSystemPrompt,
   extractUserPrompt,
   extractLatestUserPrompt,
+  countRecentToolTurns,
+  computeToolNeedScore,
   hashPrompt,
+  isHarnessMetaAsk,
+  isTrivialChitchat,
 } from "./analyzer/task-analyzer.js";
 
 export { loadConfig, loadConfigFromString, parseRouterConfig, attachPolicy } from "./config/load-config.js";

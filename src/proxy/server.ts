@@ -32,7 +32,23 @@ import {
   unwrapFakeToolText,
   type AnthropicMessage,
 } from "./anthropic-openai.js";
-import { isHarnessMetaAsk, isTrivialChitchat } from "../analyzer/task-analyzer.js";
+import {
+  isHarnessMetaAsk,
+  isTrivialChitchat,
+} from "../analyzer/task-analyzer.js";
+import {
+  resolveHarnessProfile,
+  type HarnessProfile,
+  type HarnessProfileName,
+} from "./harness-profile.js";
+import { getRouteLog } from "./route-log.js";
+import { getStickyTier, setStickyTier } from "./session-sticky.js";
+import {
+  completeAnthropicPlainText,
+  completeOpenAiPlainText,
+  recordPlainReplyTelemetry,
+} from "./plain-reply.js";
+import { recordUserFeedback } from "../telemetry/logger.js";
 import type {
   ChatMessage,
   ModelTier,
@@ -44,6 +60,7 @@ import { isRoutingMode } from "../routing/modes.js";
 import { PACKAGE_VERSION } from "../version.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 
 export interface ProxyServerOptions {
   port?: number;
@@ -56,6 +73,8 @@ export interface ProxyServerOptions {
   alwaysPreferLocal?: boolean;
   /** Log each request + errors to stderr (default true). */
   verbose?: boolean;
+  /** Harness behavior profile (default claude-code). */
+  profile?: HarnessProfileName | string;
 }
 
 const CLIENT_MODEL_ALIASES = [
@@ -530,21 +549,33 @@ function asText(content: unknown): string {
 
 function proxyOverrides(
   req: IncomingMessage,
-  options: ProxyServerOptions
+  options: ProxyServerOptions,
+  profile: HarnessProfile
 ): RouterOverrides {
+  const headerSession = headerValue(req, "x-maestro-session-id");
+  const sessionId = options.sessionId || headerSession || undefined;
+  const stickyTier = getStickyTier(sessionId);
   const session =
-    options.sessionId || options.maxTier || options.alwaysPreferLocal
+    sessionId || options.maxTier || options.alwaysPreferLocal || stickyTier || profile.stickyLocalBias
       ? {
-          sessionId: options.sessionId,
+          sessionId: sessionId ?? (profile.stickyLocalBias ? "proxy-ephemeral" : undefined),
           maxTier: options.maxTier,
-          alwaysPreferLocal: options.alwaysPreferLocal,
+          alwaysPreferLocal: options.alwaysPreferLocal ?? (profile.stickyLocalBias || undefined),
+          stickyTier,
         }
       : undefined;
   return {
     mode: resolveMode(req, options),
-    preferLocal: options.alwaysPreferLocal,
+    preferLocal: options.alwaysPreferLocal ?? (profile.stickyLocalBias || undefined),
     session,
   };
+}
+
+function headerValue(req: IncomingMessage, name: string): string | undefined {
+  const raw = req.headers[name];
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  if (Array.isArray(raw) && raw[0]) return raw[0].trim();
+  return undefined;
 }
 
 /** Route once, then stream — prefer native Anthropic Messages via LiteLLM. */
@@ -598,10 +629,11 @@ async function streamRoutedAnthropic(opts: {
   } = opts;
   const upstreamMessages = fullMessages ?? messages;
   const plainFallback = plainReplyFallback(ask ?? "");
+  const profile = resolveHarnessProfile(options.profile);
 
   // Route before opening SSE so native upstream can own message_start.
   const { routing, analysis } = await dryRunRoute(
-    { messages, tools, overrides: proxyOverrides(req, options) },
+    { messages, tools, overrides: proxyOverrides(req, options, profile) },
     { config }
   );
 
@@ -612,10 +644,11 @@ async function streamRoutedAnthropic(opts: {
 
   // When Claude Code attaches tools but this turn doesn't need them, force a
   // plain-text reply so local models don't emit fake Write/Bash JSON.
-  const plainReply =
-    !analysis.requiresToolUse && Array.isArray(tools) && tools.length > 0;
-  const forwardTools = analysis.requiresToolUse ? anthropicBody.tools : undefined;
-  const forwardOpenAiTools = analysis.requiresToolUse ? tools : undefined;
+  const omitTools =
+    profile.omitToolsWhenOmittable && !analysis.requiresToolUse;
+  const plainReply = omitTools && Array.isArray(tools) && tools.length > 0;
+  const forwardTools = omitTools ? undefined : anthropicBody.tools;
+  const forwardOpenAiTools = omitTools ? undefined : tools;
 
   const endpoint = getPrimaryEndpoint(config, routing.tier);
   const useNative = supportsAnthropicMessages(endpoint);
@@ -655,6 +688,10 @@ async function streamRoutedAnthropic(opts: {
         routedModel: routing.model,
         routedTier: routing.tier,
         fallback: plainFallback,
+        config,
+        sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+        ask,
+        hintExtra: profile.plainTextHintExtra,
       });
       return;
     }
@@ -696,6 +733,9 @@ async function streamRoutedAnthropic(opts: {
       routedModel: routing.model,
       routedTier: routing.tier,
       fallback: plainFallback,
+      config,
+      sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+      ask,
     });
     return;
   }
@@ -753,6 +793,10 @@ async function respondAnthropicPlainText(opts: {
   routedModel: string;
   routedTier: string;
   fallback: string;
+  config?: RouterConfig;
+  sessionId?: string;
+  ask?: string;
+  hintExtra?: string;
 }): Promise<void> {
   const {
     res,
@@ -767,32 +811,33 @@ async function respondAnthropicPlainText(opts: {
     routedModel,
     routedTier,
     fallback,
+    config,
+    sessionId,
+    ask,
+    hintExtra,
   } = opts;
 
-  const normalized = normalizeAnthropicSystem(
-    anthropicBody.messages,
-    anthropicBody.system
-  );
-  const native = await anthropicMessagesCompletion(
+  const { text, outcome, plainRetry } = await completeAnthropicPlainText({
     endpoint,
-    {
-      model: endpoint.model,
-      messages: normalized.messages,
-      max_tokens: maxTokens ?? 1024,
-      ...(normalized.system != null ? { system: normalized.system } : {}),
-    },
-    { headers: forwardHeaders }
-  );
-
-  const rawText = Array.isArray(native.content)
-    ? native.content
-        .map((b) => {
-          const block = b as { type?: string; text?: string };
-          return block.type === "text" && typeof block.text === "string" ? block.text : "";
-        })
-        .join("")
-    : asText(native.content);
-  const text = coercePlainAssistantText(rawText, fallback);
+    messages: anthropicBody.messages,
+    system: anthropicBody.system,
+    maxTokens,
+    forwardHeaders,
+    fallback,
+    plainHint: PLAIN_TEXT_ONLY_HINT,
+    hintExtra,
+  });
+  recordPlainReplyTelemetry({
+    config,
+    sessionId,
+    ask,
+    text,
+    routedModel,
+    routedTier: routedTier as ModelTier,
+    started,
+    outcome,
+    plainRetry,
+  });
   emitAnthropicTextMessage(res, {
     id: provisionalId,
     model: clientModel,
@@ -801,7 +846,9 @@ async function respondAnthropicPlainText(opts: {
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${text.length}ch stop=end_turn ` +
-        `routed=${routedModel} tier=${routedTier} plain=1`
+        `routed=${routedModel} tier=${routedTier} plain=1` +
+        `${plainRetry ? " plain_retry=1" : ""}` +
+        `${outcome !== "ok" ? ` ${outcome}=1` : ""}`
     );
   }
 }
@@ -819,6 +866,9 @@ async function respondOpenAiPlainText(opts: {
   routedModel: string;
   routedTier: string;
   fallback: string;
+  config?: RouterConfig;
+  sessionId?: string;
+  ask?: string;
 }): Promise<void> {
   const {
     res,
@@ -833,13 +883,29 @@ async function respondOpenAiPlainText(opts: {
     routedModel,
     routedTier,
     fallback,
+    config,
+    sessionId,
+    ask,
   } = opts;
 
-  const completion = await chatCompletionWithTools(endpoint, tier, {
+  const { text, outcome, plainRetry } = await completeOpenAiPlainText({
+    endpoint,
+    tier,
     messages,
-    maxTokens: maxTokens ?? 1024,
+    maxTokens,
+    fallback,
   });
-  const text = coercePlainAssistantText(asText(completion.content), fallback);
+  recordPlainReplyTelemetry({
+    config,
+    sessionId,
+    ask,
+    text,
+    routedModel,
+    routedTier: routedTier as ModelTier,
+    started,
+    outcome,
+    plainRetry,
+  });
   emitAnthropicTextMessage(res, {
     id: provisionalId,
     model: clientModel,
@@ -848,7 +914,8 @@ async function respondOpenAiPlainText(opts: {
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${text.length}ch stop=end_turn ` +
-        `routed=${routedModel} tier=${routedTier} plain=1`
+        `routed=${routedModel} tier=${routedTier} plain=1` +
+        `${plainRetry ? " plain_retry=1" : ""}`
     );
   }
 }
@@ -1145,12 +1212,14 @@ async function streamRoutedOpenAi(opts: {
     verbose,
   } = opts;
 
+  const profile = resolveHarnessProfile(options.profile);
+
   beginOpenAiSse(res, { id: provisionalId, model: clientModel });
   let stopHeartbeat = startSseHeartbeat(res, "openai", 5_000);
 
   try {
     const { routing } = await dryRunRoute(
-      { messages, tools, overrides: proxyOverrides(req, options) },
+      { messages, tools, overrides: proxyOverrides(req, options, profile) },
       { config }
     );
     stopHeartbeat();
@@ -1266,7 +1335,9 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
   const port = options.port ?? 4100;
   const host = options.host ?? "127.0.0.1";
   const verbose = options.verbose !== false;
+  const profile = resolveHarnessProfile(options.profile);
   const config = loadConfig(options.configPath);
+  const ephemeralSessionId = options.sessionId ?? `proxy-${randomUUID().slice(0, 8)}`;
 
   installProcessGuards();
 
@@ -1317,6 +1388,64 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         version: PACKAGE_VERSION,
         protocols: ["openai", "anthropic"],
       });
+      return;
+    }
+
+    if (req.method === "GET" && (path === "/status" || path === "/v1/status")) {
+      sendJson(res, 200, {
+        ok: true,
+        service: "maestro-proxy",
+        version: PACKAGE_VERSION,
+        host,
+        port,
+        profile: profile.name,
+        mode: options.mode ?? null,
+        maxTier: options.maxTier ?? null,
+        preferLocal: Boolean(options.alwaysPreferLocal || profile.stickyLocalBias),
+        sessionId: options.sessionId ?? ephemeralSessionId,
+        recentRoutes: getRouteLog(),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && (path === "/v1/feedback" || path === "/feedback")) {
+      try {
+        const raw = await readBody(req);
+        const body = JSON.parse(raw || "{}") as {
+          sessionId?: string;
+          rating?: string | number;
+          note?: string;
+          feedback?: string;
+          lastRequestId?: string;
+          telemetryId?: string;
+        };
+        const feedback =
+          body.feedback ||
+          body.note ||
+          (body.rating != null ? String(body.rating) : "");
+        if (!feedback.trim()) {
+          sendJson(res, 400, {
+            type: "error",
+            error: { type: "invalid_request_error", message: "feedback or note required" },
+          });
+          return;
+        }
+        const id = recordUserFeedback(
+          config,
+          body.telemetryId || body.lastRequestId || "proxy-feedback",
+          feedback.trim(),
+          body.sessionId || options.sessionId || ephemeralSessionId
+        );
+        sendJson(res, 200, { ok: true, id });
+      } catch (err) {
+        sendJson(res, 400, {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
       return;
     }
 
@@ -1457,7 +1586,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             {
               messages: routeMessages,
               tools: openAiTools,
-              overrides: proxyOverrides(req, options),
+              overrides: proxyOverrides(req, options, profile),
             },
             { config }
           );
@@ -1476,27 +1605,48 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           let stopReason = "end_turn";
           let inputTokens = 0;
           let outputTokens = 1;
+          const omitTools =
+            profile.omitToolsWhenOmittable && !analysis.requiresToolUse;
           const plainReply =
-            !analysis.requiresToolUse &&
+            omitTools &&
             Array.isArray(openAiTools) &&
             openAiTools.length > 0;
-          const forwardTools = analysis.requiresToolUse
-            ? anthropicBody.tools
-            : undefined;
-          const forwardOpenAiTools = analysis.requiresToolUse ? openAiTools : undefined;
+          const forwardTools = omitTools ? undefined : anthropicBody.tools;
+          const forwardOpenAiTools = omitTools ? undefined : openAiTools;
 
           if (supportsAnthropicMessages(endpoint)) {
-            const bodyForUpstream = plainReply
-              ? {
-                  messages: simplifyAnthropicMessagesForPlainReply(
-                    anthropicBody.messages
-                  ),
-                  system: mergeAnthropicSystem(
-                    anthropicBody.system,
-                    PLAIN_TEXT_ONLY_HINT
-                  ),
-                }
-              : {
+            if (plainReply) {
+              const { text, outcome, plainRetry } = await completeAnthropicPlainText({
+                endpoint,
+                messages: simplifyAnthropicMessagesForPlainReply(
+                  anthropicBody.messages
+                ),
+                system: anthropicBody.system,
+                maxTokens: maxTokens ?? 4096,
+                forwardHeaders,
+                fallback: plainReplyFallback(humanAsk || ""),
+                plainHint: PLAIN_TEXT_ONLY_HINT,
+                hintExtra: profile.plainTextHintExtra,
+              });
+              content = [{ type: "text", text }];
+              stopReason = "end_turn";
+              recordPlainReplyTelemetry({
+                config,
+                sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+                ask: humanAsk || undefined,
+                text,
+                routedModel: routing.model,
+                routedTier: routing.tier,
+                started,
+                outcome,
+                plainRetry,
+              });
+              stopHeartbeat?.();
+              stopHeartbeat = undefined;
+              inputTokens = 0;
+              outputTokens = Math.max(1, Math.ceil(text.length / 4));
+            } else {
+            const bodyForUpstream = {
                   messages: anthropicBody.messages,
                   system: anthropicBody.system,
                 };
@@ -1521,39 +1671,17 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             stopHeartbeat?.();
             stopHeartbeat = undefined;
 
-            if (plainReply) {
-              const rawText = Array.isArray(native.content)
-                ? native.content
-                    .map((b) => {
-                      const block = b as { type?: string; text?: string };
-                      return block.type === "text" && typeof block.text === "string"
-                        ? block.text
-                        : "";
-                    })
-                    .join("")
-                : asText(native.content);
-              content = [
-                {
-                  type: "text",
-                  text: coercePlainAssistantText(
-                    rawText,
-                    plainReplyFallback(humanAsk || "")
-                  ),
-                },
-              ];
-              stopReason = "end_turn";
-            } else {
               content = Array.isArray(native.content)
                 ? (native.content as Array<Record<string, unknown>>)
                 : [{ type: "text", text: asText(native.content) }];
               stopReason =
                 typeof native.stop_reason === "string" ? native.stop_reason : "end_turn";
-            }
             const usage = native.usage as
               | { input_tokens?: number; output_tokens?: number }
               | undefined;
             inputTokens = usage?.input_tokens ?? 0;
             outputTokens = usage?.output_tokens ?? 1;
+            } // end else (!plainReply) native path
           } else {
             const completion = await chatCompletionWithTools(endpoint, routing.tier, {
               messages: plainReply
@@ -1753,7 +1881,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           {
             messages: body.messages,
             tools: openAiTools,
-            overrides: proxyOverrides(req, options),
+            overrides: proxyOverrides(req, options, profile),
           },
           { config }
         );

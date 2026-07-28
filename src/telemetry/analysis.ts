@@ -11,6 +11,11 @@ export interface TierTaskCell {
   escalationRate: number;
   avgLatencyMs: number;
   avgCostUsd: number;
+  /** Fraction of records with plain_coerced / plain_fallback outcomes */
+  coerceRate?: number;
+  difficulty?: import("../types.js").TaskDifficulty;
+  requiresToolUse?: boolean;
+  mode?: string;
 }
 
 export interface TierRecommendation {
@@ -53,10 +58,13 @@ export interface RoutingInsights {
 export interface AnalysisOptions {
   minSamples?: number;
   minRecordsForReadiness?: number;
+  difficulty?: import("../types.js").TaskDifficulty;
+  requiresToolUse?: boolean;
+  mode?: string;
 }
 
 const DEFAULT_MIN_SAMPLES = 5;
-const DEFAULT_MIN_RECORDS = 25;
+const DEFAULT_MIN_RECORDS = 40;
 
 export function computeRoutingInsights(
   records: TelemetryRecord[],
@@ -65,9 +73,27 @@ export function computeRoutingInsights(
   const minSamples = options.minSamples ?? DEFAULT_MIN_SAMPLES;
   const minRecords = options.minRecordsForReadiness ?? DEFAULT_MIN_RECORDS;
 
-  const cells = aggregateCells(records);
+  let filtered = records;
+  if (options.difficulty) {
+    filtered = filtered.filter(
+      (r) =>
+        (r.difficulty ?? r.taskAnalysis.difficulty) === options.difficulty
+    );
+  }
+  if (options.requiresToolUse != null) {
+    filtered = filtered.filter(
+      (r) =>
+        (r.requiresToolUse ?? r.taskAnalysis.requiresToolUse) ===
+        options.requiresToolUse
+    );
+  }
+  if (options.mode) {
+    filtered = filtered.filter((r) => r.mode === options.mode);
+  }
+
+  const cells = aggregateCells(filtered);
   const recommendations = buildRecommendations(cells, minSamples);
-  const findings = buildFindings(cells, recommendations, records, minSamples);
+  const findings = buildFindings(cells, recommendations, filtered, minSamples);
   const modeComparisons = compareModes(records);
   const readiness = assessReadiness(records, recommendations, minSamples, minRecords);
 
@@ -88,9 +114,13 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       taskType: TaskType;
       tier: ModelTier;
       model: string;
+      difficulty?: import("../types.js").TaskDifficulty;
+      requiresToolUse?: boolean;
+      mode?: string;
       total: number;
       successes: number;
       escalations: number;
+      coerces: number;
       latencySum: number;
       costSum: number;
     }
@@ -100,15 +130,23 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
     const tier = servedTier(record);
     const model = servedModel(record);
     const taskType = record.taskAnalysis.taskType;
-    const key = `${taskType}:${tier}:${model}`;
+    const difficulty = record.difficulty ?? record.taskAnalysis.difficulty;
+    const requiresToolUse =
+      record.requiresToolUse ?? record.taskAnalysis.requiresToolUse;
+    const mode = record.mode;
+    const key = `${taskType}:${difficulty}:${requiresToolUse}:${mode ?? "_"}:${tier}:${model}`;
 
     const bucket = buckets.get(key) ?? {
       taskType,
       tier,
       model,
+      difficulty,
+      requiresToolUse,
+      mode,
       total: 0,
       successes: 0,
       escalations: 0,
+      coerces: 0,
       latencySum: 0,
       costSum: 0,
     };
@@ -116,6 +154,12 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
     bucket.total++;
     if (record.success) bucket.successes++;
     if (record.escalated) bucket.escalations++;
+    if (
+      record.outcome === "plain_coerced" ||
+      record.outcome === "plain_fallback"
+    ) {
+      bucket.coerces++;
+    }
     bucket.latencySum += record.latencyMs;
     bucket.costSum += record.estimatedCostUsd ?? 0;
     buckets.set(key, bucket);
@@ -131,6 +175,10 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       escalationRate: b.escalations / b.total,
       avgLatencyMs: b.latencySum / b.total,
       avgCostUsd: b.costSum / b.total,
+      coerceRate: b.coerces / b.total,
+      difficulty: b.difficulty,
+      requiresToolUse: b.requiresToolUse,
+      mode: b.mode,
     }))
     .sort((a, b) => b.count - a.count);
 }
@@ -224,7 +272,18 @@ function buildFindings(
     );
   }
 
-  return [...new Set(findings)].slice(0, 10);
+  const highCoerce = cells.filter(
+    (c) => c.count >= minSamples && (c.coerceRate ?? 0) >= 0.25
+  );
+  for (const cell of highCoerce.slice(0, 3)) {
+    findings.push(
+      `${cell.taskType} on ${cell.tier} needed plain-reply coercion ${(
+        (cell.coerceRate ?? 0) * 100
+      ).toFixed(0)}% of the time (n=${cell.count})`
+    );
+  }
+
+  return [...new Set(findings)].slice(0, 12);
 }
 
 function compareModes(

@@ -281,6 +281,8 @@ async function main(): Promise<void> {
       const maxTier = maxTierRaw && TIER_ORDER.includes(maxTierRaw as ModelTier)
         ? (maxTierRaw as ModelTier)
         : undefined;
+      const profile =
+        typeof flags.profile === "string" ? flags.profile : "claude-code";
       const { host: h, port: p } = await startProxyServer({
         port,
         host,
@@ -290,11 +292,15 @@ async function main(): Promise<void> {
         alwaysPreferLocal: Boolean(flags["prefer-local"]),
         sessionId:
           typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
+        profile,
+        verbose: !Boolean(flags.quiet),
       });
       console.log(`Maestro proxy listening on http://${h}:${p}`);
       console.log(`OpenAI  (Cursor):  base URL http://${h}:${p}/v1`);
       console.log(`Anthropic (Claude Code): ANTHROPIC_BASE_URL=http://${h}:${p}  (no /v1)`);
+      console.log(`Profile: ${profile}`);
       if (maxTier) console.log(`Max tier capped at: ${maxTier}`);
+      console.log(`Status: http://${h}:${p}/status`);
       console.log("Model id can stay sonnet/maestro/etc. — Maestro routes underneath.");
       console.log("Ctrl+C to stop.");
       await new Promise(() => {});
@@ -457,13 +463,18 @@ Usage:
   maestro stats [--last N]            Telemetry summary (default 50)
   maestro analyze [--all]             Telemetry routing insights & recommendations
   maestro insights                    Alias for analyze
-  maestro proxy [--port 4100] [--max-tier hosted_oss]  OpenAI + Anthropic proxy
+  maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss]
   maestro version                     Print package version
 
 Profiles (for init):
   default       Ollama + LiteLLM (full tier stack)
   ollama-only   Local Ollama only — no LiteLLM required
   cloud-only    LiteLLM/cloud only — no Ollama required
+
+Proxy harness profiles (--profile):
+  claude-code   Omit tools on chitchat; plain-reply coercion (default)
+  cursor        Keep tools attached (Cursor agent loops)
+  openai        Generic OpenAI-compatible clients
 
 Flags:
   --version, -v            Print package version and exit
@@ -484,6 +495,9 @@ Flags:
   --dry-run-workflow       Preview workflow plan without executing
   --port <n>               Proxy listen port (default 4100)
   --host <addr>            Proxy bind address (default 127.0.0.1)
+  --profile <name>         Proxy harness profile (claude-code|cursor|openai)
+  --quiet                  Proxy: quieter stderr logs
+  --session-id <id>        Session id for sticky routing / budget
   --quality <fast|balanced|best>
   --risk <low|medium|high>
   --schema <json>          Response JSON schema object

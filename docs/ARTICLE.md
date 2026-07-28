@@ -305,7 +305,7 @@ For whole-session routing without MCP tool calls, run:
 maestro proxy --port 4100 --prefer-local
 ```
 
-Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock. From **v1.2**, Anthropic tools pass through natively and tokens stream live. **v1.2.1** keeps chitchat/recap turns on local models and coerces fake tool JSON into plain text.
+Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v1` — Claude appends `/v1/messages`). Cursor / OpenAI clients use `http://127.0.0.1:4100/v1`. Cap `--max-tier` if you don’t want tool-heavy prompts escalating to Bedrock. From **v1.2**, Anthropic tools pass through natively and tokens stream live. **v1.2.1** keeps chitchat/recap turns on local models and coerces fake tool JSON into plain text. **v1.5** adds harness profiles, sticky sessions, `/status`, premium pool failover, and default learned routing hints.
 
 ## Lessons learned
 
@@ -314,10 +314,11 @@ Point Claude Code at `ANTHROPIC_BASE_URL=http://127.0.0.1:4100` (**without** `/v
 3. **Keywords lie** — "design" and "architecture overview" need bounded context, not naive matching
 4. **Empty ≠ empty** — invisible characters and alternate response fields break naive evaluators
 5. **Ship distribution early** — `maestro init` mattered more than another routing feature
+6. **Tools present ≠ tools needed** — harness catalogs on every turn must not force premium
 
 ## What's next
 
-Feedback-driven stats, premium pool rotation, and eventually learned routing once telemetry has enough rows.
+Online bandits / weight training on top of the v1.5 telemetry cells, and richer multi-harness adapters.
 
 ---
 

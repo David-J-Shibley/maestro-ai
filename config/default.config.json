@@ -58,11 +58,20 @@
     "probeAvailability": true,
     "probeCacheTtlMs": 30000,
     "probeOnDryRun": false,
-    "learnedRoutingHints": false,
+    "learnedRoutingHints": true,
     "learnedMinSamples": 5
   },
   "telemetry": {
     "enabled": true,
     "logPath": "${MAESTRO_TELEMETRY_PATH:-~/.maestro-ai/telemetry.jsonl}"
-  }
+  },
+  "premiumPool": [
+    {
+      "provider": "litellm",
+      "model": "bedrock/global.anthropic.claude-sonnet-4-6",
+      "baseUrl": "http://localhost:4000/v1",
+      "apiKey": "${LITELLM_MASTER_KEY:-sk-litellm-local}",
+      "timeoutMs": 600000
+    }
+  ]
 }

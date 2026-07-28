@@ -120,6 +120,7 @@ describe("TaskAnalyzer", () => {
     expect(analysis.taskType).toBe("simple_answer");
     expect(analysis.difficulty).toBe("easy");
     expect(analysis.requiresToolUse).toBe(false);
+    expect(analysis.toolNeedScore).toBe(0);
     expect(analysis.requiresLongContext).toBe(false);
     expect(analysis.signals).toContain("tools_omittable");
   });
@@ -133,5 +134,25 @@ describe("TaskAnalyzer", () => {
     expect(analysis.requiresToolUse).toBe(false);
     expect(analysis.requiresLongContext).toBe(false);
     expect(analysis.signals).toContain("tools_omittable");
+  });
+
+  it("keeps tools on for short mid-agent continuations", () => {
+    const tools = [{ name: "Read" }];
+    const analysis = analyzeTask({
+      userPrompt: "ok continue",
+      tools,
+      recentToolTurns: 3,
+    });
+    expect(analysis.requiresToolUse).toBe(true);
+    expect(analysis.toolNeedScore).toBeGreaterThanOrEqual(0.55);
+  });
+
+  it("needs tools for explicit read/write asks", () => {
+    const analysis = analyzeTask({
+      userPrompt: "read package.json and summarize the scripts",
+      tools: [{ name: "Read" }],
+    });
+    expect(analysis.requiresToolUse).toBe(true);
+    expect(analysis.toolNeedScore).toBeGreaterThanOrEqual(0.55);
   });
 });

@@ -269,17 +269,22 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
   if (toolCount >= 20) signals.push(`large_tool_catalog=${toolCount}`);
 
   // Tools *present* ≠ tools *needed*. Claude Code always sends its catalog.
+  const toolNeedScore = computeToolNeedScore({
+    userPrompt,
+    taskType,
+    toolsAvailable,
+    recentToolTurns: input.recentToolTurns ?? 0,
+    hintRequiresTools: input.taskHints?.requiresTools,
+  });
+  const threshold = input.toolNeedThreshold ?? 0.55;
   const requiresToolUse =
-    input.taskHints?.requiresTools ??
-    (toolsAvailable &&
-      !isHarnessMetaAsk(userPrompt) &&
-      (TOOL_TASK_TYPES.includes(taskType) ||
-        TOOL_ACTION_RE.test(userPrompt) ||
-        (taskType !== "simple_answer" &&
-          taskType !== "formatting" &&
-          taskType !== "classification")));
+    input.taskHints?.requiresTools ?? toolNeedScore >= threshold;
+  signals.push(`toolNeedScore=${toolNeedScore.toFixed(2)}`);
   if (requiresToolUse) signals.push("tools_needed");
   else if (toolsAvailable) signals.push("tools_omittable");
+  if ((input.recentToolTurns ?? 0) > 0) {
+    signals.push(`recent_tool_turns=${input.recentToolTurns}`);
+  }
 
   const requiresStructuredOutput =
     input.taskHints?.requiresStructuredOutput ??
@@ -325,6 +330,7 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
     difficulty,
     riskLevel,
     requiresToolUse,
+    toolNeedScore,
     requiresCodeReasoning,
     requiresLongContext,
     requiresStructuredOutput,
@@ -332,6 +338,94 @@ export function analyzeTask(input: TaskAnalysisInput): TaskAnalysis {
     signals,
   };
 }
+
+const DEFAULT_TOOL_NEED_THRESHOLD = 0.55;
+
+export function computeToolNeedScore(opts: {
+  userPrompt: string;
+  taskType: TaskType;
+  toolsAvailable: boolean;
+  recentToolTurns?: number;
+  hintRequiresTools?: boolean;
+}): number {
+  if (opts.hintRequiresTools === true) return 1;
+  if (opts.hintRequiresTools === false) return 0;
+  if (!opts.toolsAvailable) return 0;
+
+  const ask = opts.userPrompt;
+  const recent = opts.recentToolTurns ?? 0;
+
+  // Resume / recap meta — never need tools.
+  if (isHarnessMetaAsk(ask) && !isTrivialChitchat(ask)) return 0;
+
+  // Pure greetings / thanks — never need tools. Mid-session "ok"/"yes" can.
+  if (isTrivialChitchat(ask)) {
+    const t = ask.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
+    const pureGreeting =
+      /^(hi|hello|hey|yo|sup|howdy|hiya|thanks|thank you|thx|ty|good (morning|afternoon|evening|night)|what's up|whats up|how are you)$/i.test(
+        t
+      );
+    if (pureGreeting || recent === 0) return 0;
+  }
+
+  let score = 0.2;
+  if (TOOL_TASK_TYPES.includes(opts.taskType)) score += 0.45;
+  if (TOOL_ACTION_RE.test(ask)) score += 0.35;
+  if (
+    opts.taskType !== "simple_answer" &&
+    opts.taskType !== "formatting" &&
+    opts.taskType !== "classification" &&
+    opts.taskType !== "summarization" &&
+    opts.taskType !== "rewriting"
+  ) {
+    score += 0.15;
+  }
+
+  // Mid-agent session: bias tools on for short continuations ("ok", "continue").
+  if (recent > 0) {
+    score += Math.min(0.4, 0.2 + recent * 0.05);
+    if (ask.trim().length <= 40 && !TOOL_ACTION_RE.test(ask)) {
+      score = Math.max(score, 0.7);
+    }
+  }
+
+  return Math.max(0, Math.min(1, score));
+}
+
+/** Count tool_use / tool_result activity in the last `window` messages. */
+export function countRecentToolTurns(
+  messages: Array<{ role: string; content?: unknown; tool_calls?: unknown }>,
+  window = 12
+): number {
+  const slice = messages.slice(-window);
+  let count = 0;
+  for (const m of slice) {
+    if (m.role === "assistant") {
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        count++;
+        continue;
+      }
+      if (Array.isArray(m.content)) {
+        if (m.content.some((b) => (b as { type?: string }).type === "tool_use")) {
+          count++;
+        }
+      }
+    } else if (m.role === "user" || m.role === "tool") {
+      if (m.role === "tool") {
+        count++;
+        continue;
+      }
+      if (Array.isArray(m.content)) {
+        if (m.content.some((b) => (b as { type?: string }).type === "tool_result")) {
+          count++;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+export { DEFAULT_TOOL_NEED_THRESHOLD };
 
 export function hashPrompt(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);

@@ -3,7 +3,7 @@ import type { ModelEndpointConfig, ModelTier, RouterConfig } from "../types.js";
 
 export interface ProbeResult {
   tier: ModelTier;
-  slot: "primary" | "fallback";
+  slot: "primary" | "fallback" | "premium_pool";
   available: boolean;
   latencyMs?: number;
   error?: string;
@@ -18,6 +18,7 @@ export interface TierProbeStatus {
   available: boolean;
   primary: ProbeResult;
   fallback?: ProbeResult;
+  pool?: ProbeResult[];
   effective?: ReturnType<typeof resolveEndpointForTier>;
 }
 
@@ -45,7 +46,10 @@ function cacheKey(config: RouterConfig): string {
     })
     .sort()
     .join("|");
-  return models;
+  const pool = (config.premiumPool ?? [])
+    .map((p) => `${p.provider}:${p.model}:${p.baseUrl}`)
+    .join(",");
+  return `${models}#pool=${pool}`;
 }
 
 /** Clear in-memory probe cache (tests / doctor force-refresh). */
@@ -90,38 +94,51 @@ export async function probeEndpoint(
   }
 }
 
+function slotForIndex(
+  config: RouterConfig,
+  tier: ModelTier,
+  index: number,
+  ep: ModelEndpointConfig
+): ProbeResult["slot"] {
+  if (index === 0) return "primary";
+  const fb = config.models[tier].fallback;
+  if (fb && ep.model === fb.model && ep.baseUrl === fb.baseUrl) return "fallback";
+  return "premium_pool";
+}
+
 export async function probeTier(
   config: RouterConfig,
   tier: ModelTier
 ): Promise<TierProbeStatus> {
   const endpoints = listEndpointsForTier(config, tier);
-  const primaryEp = endpoints[0]!;
-  const primaryProbe = await probeEndpoint(primaryEp);
-  const primary: ProbeResult = {
-    tier,
-    slot: "primary",
-    ...primaryProbe,
-    model: primaryEp.model,
-    provider: primaryEp.provider,
-  };
+  const probes = await Promise.all(endpoints.map((ep) => probeEndpoint(ep)));
 
-  let fallback: ProbeResult | undefined;
-  if (endpoints[1]) {
-    const fbProbe = await probeEndpoint(endpoints[1]);
-    fallback = {
-      tier,
-      slot: "fallback",
-      ...fbProbe,
-      model: endpoints[1].model,
-      provider: endpoints[1].provider,
-    };
-  }
+  const results: ProbeResult[] = endpoints.map((ep, i) => ({
+    tier,
+    slot: slotForIndex(config, tier, i, ep),
+    available: probes[i]!.available,
+    latencyMs: probes[i]!.latencyMs,
+    error: probes[i]!.error,
+    model: ep.model,
+    provider: ep.provider,
+  }));
+
+  const primary = results[0]!;
+  const fallback = results.find((r) => r.slot === "fallback");
+  const pool = results.filter((r) => r.slot === "premium_pool");
+  const poolAvailable = (config.premiumPool ?? []).map((ep) => {
+    const hit = pool.find(
+      (p) => p.model === ep.model && p.provider === ep.provider
+    );
+    return hit?.available === true;
+  });
 
   const effective = resolveEndpointForTier(
     config,
     tier,
     primary.available,
-    fallback?.available
+    fallback?.available,
+    tier === "premium" ? poolAvailable : undefined
   );
 
   return {
@@ -129,6 +146,7 @@ export async function probeTier(
     available: Boolean(effective),
     primary,
     fallback,
+    pool: pool.length ? pool : undefined,
     effective: effective ?? undefined,
   };
 }
@@ -146,6 +164,7 @@ async function probeAllTiersUncached(config: RouterConfig): Promise<ProbeAllResu
       tiers.push(status);
       results.push(status.primary);
       if (status.fallback) results.push(status.fallback);
+      if (status.pool) results.push(...status.pool);
       if (!status.available) unavailable.add(tier);
     })
   );

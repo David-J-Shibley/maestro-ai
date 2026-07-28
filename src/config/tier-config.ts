@@ -59,33 +59,78 @@ export function listEndpointsForTier(
   tier: ModelTier
 ): ModelEndpointConfig[] {
   const tc = config.models[tier];
-  return tc.fallback ? [tc.primary, tc.fallback] : [tc.primary];
+  const out: ModelEndpointConfig[] = [];
+  const seen = new Set<string>();
+  const add = (ep: ModelEndpointConfig | undefined) => {
+    if (!ep) return;
+    const key = `${ep.provider}|${ep.baseUrl}|${ep.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(ep);
+  };
+  add(tc.primary);
+  add(tc.fallback);
+  if (tier === "premium") {
+    for (const ep of config.premiumPool ?? []) add(ep);
+  }
+  return out;
 }
 
 export interface ResolvedEndpoint {
   tier: ModelTier;
   endpoint: ModelEndpointConfig;
-  source: "primary" | "tier_fallback";
+  source: "primary" | "tier_fallback" | "premium_pool";
   fallbackReason?: string;
 }
 
+/**
+ * Pick the first available endpoint for a tier.
+ * `availability[i]` aligns with `listEndpointsForTier(config, tier)`.
+ */
 export function resolveEndpointForTier(
   config: RouterConfig,
   tier: ModelTier,
   primaryAvailable: boolean,
-  fallbackAvailable?: boolean
+  fallbackAvailable?: boolean,
+  poolAvailable?: boolean[]
 ): ResolvedEndpoint | null {
   const tc = config.models[tier];
-  if (primaryAvailable) {
-    return { tier, endpoint: tc.primary, source: "primary" };
-  }
-  if (tc.fallback && fallbackAvailable !== false) {
-    return {
-      tier,
-      endpoint: tc.fallback,
-      source: "tier_fallback",
-      fallbackReason: `${tier} primary (${tc.primary.provider}/${tc.primary.model}) unavailable; using tier fallback (${tc.fallback.provider}/${tc.fallback.model})`,
-    };
+  const endpoints = listEndpointsForTier(config, tier);
+
+  const flags: boolean[] = endpoints.map((ep, i) => {
+    if (i === 0) return primaryAvailable;
+    if (i === 1 && tc.fallback && ep === tc.fallback) {
+      return fallbackAvailable !== false;
+    }
+    // premium pool slots
+    const pool = config.premiumPool ?? [];
+    const poolIdx = pool.findIndex(
+      (p) =>
+        p.provider === ep.provider && p.baseUrl === ep.baseUrl && p.model === ep.model
+    );
+    if (poolIdx >= 0) {
+      if (!poolAvailable || poolAvailable.length === 0) return true;
+      return poolAvailable[poolIdx] === true;
+    }
+    // Extra fallback-like entry without explicit flag
+    return fallbackAvailable !== false;
+  });
+
+  for (let i = 0; i < endpoints.length; i++) {
+    if (!flags[i]) continue;
+    const ep = endpoints[i]!;
+    let source: ResolvedEndpoint["source"] = "primary";
+    let fallbackReason: string | undefined;
+    if (i === 0) {
+      source = "primary";
+    } else if (tc.fallback && ep.model === tc.fallback.model && ep.baseUrl === tc.fallback.baseUrl) {
+      source = "tier_fallback";
+      fallbackReason = `${tier} primary (${tc.primary.provider}/${tc.primary.model}) unavailable; using tier fallback (${ep.provider}/${ep.model})`;
+    } else {
+      source = "premium_pool";
+      fallbackReason = `premium primary unavailable; using premium pool (${ep.provider}/${ep.model})`;
+    }
+    return { tier, endpoint: ep, source, fallbackReason };
   }
   return null;
 }

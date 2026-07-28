@@ -167,6 +167,10 @@ See `.env.example` in the repo or `~/.maestro-ai/.env.example` after init:
 | Bedrock `Unexpected role "system"` | Use v1.2+ (system roles lifted to top-level `system`) |
 | Claude Code shows `{"name":"Memory"…}` / fake Write JSON on `hi` | Use v1.2.1+ (plain-reply coercion); restart proxy from latest build |
 | `hi` routes to Bedrock / AWS SSO errors | Use v1.2.1+ (tools omittable for chitchat); or `--max-tier hosted_oss --prefer-local` |
+| Want Cursor vs Claude Code defaults | `maestro proxy --profile cursor` or `--profile claude-code` (default) |
+| Bedrock SSO expired mid-session | Configure `premiumPool` alternates (v1.5+); Maestro rotates before escalating |
+| Inspect recent proxy routes | `curl http://127.0.0.1:4100/status` |
+| Enable/disable learned routing | `routing.learnedRoutingHints` in config (default **true** in v1.5; needs ~40 telemetry rows) |
 | Claude Code resets on long tasks (`ECONNRESET`) | Restart proxy from latest build — SSE opens immediately with `ping` heartbeats while routing |
 
 ## Custom config
