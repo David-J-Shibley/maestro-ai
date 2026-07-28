@@ -1,5 +1,6 @@
 import {
   analyzeTask,
+  extractLatestUserPrompt,
   extractSystemPrompt,
   extractUserPrompt,
   hashPrompt,
@@ -72,7 +73,7 @@ export async function routedLLMCall(
   const effectiveConfig: RouterConfig = { ...config, routing: runtime.routing };
   const modeConstraints = runtime.constraints;
 
-  const userPrompt = extractUserPrompt(input.messages);
+  const userPrompt = extractLatestUserPrompt(input.messages);
   const systemPrompt = extractSystemPrompt(input.messages);
 
   const analysis = analyzeTask({
@@ -331,7 +332,7 @@ export async function dryRunRoute(
   const overrides = runtime.overrides;
   const effectiveConfig: RouterConfig = { ...config, routing: runtime.routing };
 
-  const userPrompt = extractUserPrompt(input.messages);
+  const userPrompt = extractLatestUserPrompt(input.messages);
 
   const analysis = analyzeTask({
     userPrompt,

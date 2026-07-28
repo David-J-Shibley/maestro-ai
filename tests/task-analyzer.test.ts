@@ -107,4 +107,31 @@ describe("TaskAnalyzer", () => {
 
     expect(analysis.requiresToolUse).toBe(true);
   });
+
+  it("does not treat harness tool catalogs as needing tools for chitchat", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({
+      name: `Tool${i}`,
+      input_schema: { type: "object", properties: {} },
+    }));
+    const analysis = analyzeTask({
+      userPrompt: "hi",
+      tools,
+    });
+    expect(analysis.taskType).toBe("simple_answer");
+    expect(analysis.difficulty).toBe("easy");
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(analysis.requiresLongContext).toBe(false);
+    expect(analysis.signals).toContain("tools_omittable");
+  });
+
+  it("treats Claude Code resume/recap prompts as meta (no tools needed)", () => {
+    const analysis = analyzeTask({
+      userPrompt:
+        "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences.",
+      tools: Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` })),
+    });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(analysis.requiresLongContext).toBe(false);
+    expect(analysis.signals).toContain("tools_omittable");
+  });
 });

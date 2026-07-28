@@ -116,8 +116,232 @@ export function anthropicToolsToOpenAi(tools: unknown[] | undefined): unknown[] 
 }
 
 /**
- * Convert Anthropic messages to OpenAI chat messages, preserving tool_use / tool_result.
+ * Latest *human* ask from Anthropic messages.
+ * Skips tool_result-only turns and Claude Code `<system-reminder>` text blocks
+ * so routing sees "hi" instead of a 10k reminder blob.
  */
+export function extractLatestAnthropicUserAsk(
+  messages: AnthropicMessage[]
+): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== "user") continue;
+
+    if (typeof m.content === "string") {
+      const ask = stripHarnessNoise(m.content);
+      if (ask) return ask;
+      continue;
+    }
+    if (!Array.isArray(m.content)) continue;
+
+    const toolResults = m.content.filter((b) => b.type === "tool_result");
+    const textBlocks = m.content.filter(
+      (b): b is { type: "text"; text: string } =>
+        b.type === "text" && typeof (b as { text?: unknown }).text === "string"
+    );
+    // Pure tool_result turns — keep scanning for the real human message.
+    if (toolResults.length > 0 && textBlocks.length === 0) continue;
+
+    for (const block of textBlocks) {
+      const ask = stripHarnessNoise(block.text);
+      if (ask) return ask;
+    }
+  }
+  return "";
+}
+
+function stripHarnessNoise(text: string): string {
+  const stripped = text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "")
+    .replace(/<system>[\s\S]*?<\/system>/gi, "")
+    .replace(/#\s*System Reminders?\b[\s\S]*/i, "")
+    .trim();
+  return stripped;
+}
+
+export const PLAIN_TEXT_ONLY_HINT =
+  "Reply in plain natural language only. Do not call tools, do not emit tool-call JSON, " +
+  "and do not write files. Just answer the user directly.";
+
+/**
+ * Collapse tool_use / tool_result history into short text so local models
+ * don't imitate tool JSON when tools were intentionally omitted.
+ */
+export function simplifyAnthropicMessagesForPlainReply(
+  messages: AnthropicMessage[]
+): AnthropicMessage[] {
+  const out: AnthropicMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (typeof m.content === "string") {
+      const text = stripHarnessNoise(m.content);
+      if (text) out.push({ role: m.role === "assistant" ? "assistant" : "user", content: text });
+      continue;
+    }
+    if (!Array.isArray(m.content)) continue;
+
+    if (m.role === "assistant") {
+      const texts = m.content
+        .filter(
+          (b): b is { type: "text"; text: string } =>
+            b.type === "text" && typeof (b as { text?: unknown }).text === "string"
+        )
+        .map((b) => stripHarnessNoise(b.text))
+        .filter(Boolean);
+      const toolNames = m.content
+        .filter((b) => b.type === "tool_use")
+        .map((b) => String((b as { name?: string }).name ?? "tool"));
+      const parts = [...texts];
+      if (toolNames.length) parts.push(`(used tools: ${toolNames.join(", ")})`);
+      if (parts.length) out.push({ role: "assistant", content: parts.join("\n") });
+      continue;
+    }
+
+    // user
+    const texts = m.content
+      .filter(
+        (b): b is { type: "text"; text: string } =>
+          b.type === "text" && typeof (b as { text?: unknown }).text === "string"
+      )
+      .map((b) => stripHarnessNoise(b.text))
+      .filter(Boolean);
+    const toolResults = m.content.filter((b) => b.type === "tool_result");
+    const parts = [...texts];
+    if (toolResults.length) {
+      const preview = toolResults
+        .slice(0, 3)
+        .map((b) => contentToText((b as { content?: unknown }).content ?? ""))
+        .map((t) => (t.length > 200 ? `${t.slice(0, 200)}…` : t))
+        .filter(Boolean);
+      if (preview.length) parts.push(`(tool results: ${preview.join(" | ")})`);
+      else parts.push(`(${toolResults.length} tool result(s))`);
+    }
+    if (parts.length) out.push({ role: "user", content: parts.join("\n") });
+  }
+  return out;
+}
+
+export function mergeAnthropicSystem(system: unknown, extra: string): unknown {
+  if (!extra) return system;
+  if (system == null || system === "") return extra;
+  if (typeof system === "string") return `${system}\n\n${extra}`;
+  if (Array.isArray(system)) {
+    return [...system, { type: "text", text: extra }];
+  }
+  return [{ type: "text", text: contentToText(system) }, { type: "text", text: extra }];
+}
+
+/** Pull the first balanced `{...}` object out of model text (tolerates trailing junk / missing outer close). */
+export function extractBalancedJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+export function looksLikeFakeToolDump(text: string): boolean {
+  const s = text.trim();
+  return (
+    /^\s*\{/.test(s) &&
+    /"name"\s*:/.test(s) &&
+    (/"parameters"\s*:/.test(s) || /"input"\s*:/.test(s) || /"arguments"\s*:/.test(s))
+  );
+}
+
+function looksLikeToolMetaJunk(text: string): boolean {
+  return (
+    /\[\[tool\]\]/i.test(text) ||
+    /memory entry for the tool/i.test(text) ||
+    /^This is a memory entry/i.test(text.trim())
+  );
+}
+
+/**
+ * Local models often emit fake tool JSON as text, e.g.
+ * {"name":"Write","parameters":{"content":"Hello!",...}}
+ * Prefer the embedded natural-language content when present.
+ * Returns "" when the dump is non-conversational (Memory, meta junk).
+ */
+export function unwrapFakeToolText(text: string): string {
+  const trimmed = text.trim();
+  const json = extractBalancedJsonObject(trimmed) ?? (trimmed.startsWith("{") ? trimmed : null);
+  if (!json) return text;
+  try {
+    const parsed = JSON.parse(json) as {
+      name?: string;
+      parameters?: Record<string, unknown>;
+      input?: Record<string, unknown>;
+      arguments?: Record<string, unknown> | string;
+    };
+    if (!parsed || typeof parsed !== "object" || typeof parsed.name !== "string") {
+      return text;
+    }
+    // Memory / harness bookkeeping is never a user-facing reply.
+    if (/^(Memory|memory)$/i.test(parsed.name)) return "";
+    const params =
+      parsed.parameters && typeof parsed.parameters === "object"
+        ? parsed.parameters
+        : parsed.input && typeof parsed.input === "object"
+          ? parsed.input
+          : typeof parsed.arguments === "object" && parsed.arguments
+            ? parsed.arguments
+            : typeof parsed.arguments === "string"
+              ? (JSON.parse(parsed.arguments) as Record<string, unknown>)
+              : null;
+    if (!params) return looksLikeFakeToolDump(trimmed) ? "" : text;
+    for (const key of ["content", "message", "text", "body"]) {
+      const v = params[key];
+      if (typeof v === "string" && v.trim()) {
+        if (looksLikeToolMetaJunk(v) || looksLikeFakeToolDump(v)) return "";
+        return v;
+      }
+    }
+    return looksLikeFakeToolDump(trimmed) ? "" : text;
+  } catch {
+    return looksLikeFakeToolDump(trimmed) ? "" : text;
+  }
+}
+
+/** Turn model text into something Claude Code can show as a normal reply. */
+export function coercePlainAssistantText(text: string, fallback: string): string {
+  let t = unwrapFakeToolText(text.trim());
+  if (!t.trim() || looksLikeFakeToolDump(t) || looksLikeToolMetaJunk(t)) {
+    return fallback;
+  }
+  return t;
+}
+
+export function plainReplyFallback(ask: string): string {
+  const a = ask.trim().toLowerCase();
+  if (/^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool)\b/.test(a) || a.length <= 12) {
+    return "Hello! How can I help you today?";
+  }
+  if (/stepped away|recap|welcome back|session (?:was )?(?:paused|resumed)/i.test(ask)) {
+    return "Welcome back — ready when you are.";
+  }
+  return "I'm here. What would you like to do next?";
+}
+
 export function anthropicToChatMessages(
   messages: AnthropicMessage[],
   system?: unknown

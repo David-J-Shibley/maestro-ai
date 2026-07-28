@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   anthropicToChatMessages,
   anthropicToolsToOpenAi,
+  coercePlainAssistantText,
+  extractLatestAnthropicUserAsk,
   normalizeAnthropicSystem,
+  unwrapFakeToolText,
 } from "../src/proxy/anthropic-openai.js";
 
 describe("anthropic ↔ openai conversion", () => {
@@ -101,5 +104,52 @@ describe("anthropic ↔ openai conversion", () => {
       { type: "text", text: "You are Maestro." },
       { type: "text", text: "Be concise." },
     ]);
+  });
+
+  it("extracts human ask without Claude Code system-reminders", () => {
+    expect(
+      extractLatestAnthropicUserAsk([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "hi" },
+            {
+              type: "text",
+              text: "<system-reminder>\nAlways use tools.\n</system-reminder>",
+            },
+          ],
+        },
+      ])
+    ).toBe("hi");
+  });
+
+  it("unwraps fake Write tool JSON into plain text", () => {
+    expect(
+      unwrapFakeToolText(
+        JSON.stringify({
+          name: "Write",
+          parameters: {
+            content: "Hello! How can I help?",
+            file_path: "/tmp/claude_message.txt",
+          },
+        })
+      )
+    ).toBe("Hello! How can I help?");
+  });
+
+  it("drops Memory fake tool dumps instead of showing them", () => {
+    const dump =
+      '{"name": "Memory", "parameters": {"content": "[[tool]]\\n\\nThis is a memory entry for the tool that created the message.", "metadata": {"type": "feedback"}}}';
+    expect(unwrapFakeToolText(dump)).toBe("");
+    expect(coercePlainAssistantText(dump, "Hello! How can I help you today?")).toBe(
+      "Hello! How can I help you today?"
+    );
+  });
+
+  it("coerces incomplete fake tool JSON via balanced extract", () => {
+    // Missing final closing brace — still extractable / recognizable as dump
+    const dump =
+      '{"name": "Memory", "parameters": {"content": "[[tool]]\\n\\nThis is a memory entry for the tool that created the message.", "metadata": {"type": "feedback"}}';
+    expect(coercePlainAssistantText(dump, "Hello!")).toBe("Hello!");
   });
 });
