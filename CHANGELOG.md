@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-07-28
+
+### Fixed
+- **Plain-reply greeting loop** — real Q&A (e.g. “do you have memory…?”) no longer hits the buffered plain-reply path that replaced answers with `I'm here. What would you like to do next?` after fake-tool retries. Only trivial chitchat uses that path; other tools-omittable turns stream a normal model answer with tools omitted.
+- Claude Code `[SUGGESTION MODE:…]` prompts are treated as harness meta (tools omittable) even when long.
+
+[1.5.2]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.5.2
+
 ## [1.5.1] - 2026-07-28
 
 ### Fixed

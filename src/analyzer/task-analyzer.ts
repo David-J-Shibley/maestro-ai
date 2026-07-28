@@ -124,8 +124,13 @@ function hasKeyword(haystack: string, keyword: string): boolean {
 export function isHarnessMetaAsk(prompt: string): boolean {
   if (isTrivialChitchat(prompt)) return true;
   const t = prompt.trim().toLowerCase();
-  if (t.length > 500) return false;
+  if (t.length > 500) {
+    // Still catch Claude Code suggestion-mode prefixes in long blobs.
+    if (/^\[suggestion mode:/i.test(prompt.trim())) return true;
+    return false;
+  }
   return (
+    /^\[suggestion mode:/i.test(t) ||
     /^the user stepped away\b/i.test(t) ||
     (/\bis coming back\b/i.test(t) && /\brecap\b/i.test(t)) ||
     /^recap\b/i.test(t) ||

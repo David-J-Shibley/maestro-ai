@@ -2,6 +2,7 @@
  * Anthropic Messages ↔ OpenAI Chat Completions conversion for the proxy.
  */
 import type { ChatMessage, ChatMessageToolCall } from "../types.js";
+import { isTrivialChitchat } from "../analyzer/task-analyzer.js";
 
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
@@ -347,13 +348,18 @@ export function needsPlainReplyRetry(rawText: string, fallback: string): boolean
 
 export function plainReplyFallback(ask: string): string {
   const a = ask.trim().toLowerCase();
-  if (/^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool)\b/.test(a) || a.length <= 12) {
+  if (isTrivialChitchat(ask) || /^(hi|hey|hello|yo|sup|thanks|thank you|ok|okay|cool)\b/.test(a)) {
     return "Hello! How can I help you today?";
   }
   if (/stepped away|recap|welcome back|session (?:was )?(?:paused|resumed)/i.test(ask)) {
     return "Welcome back — ready when you are.";
   }
-  return "I'm here. What would you like to do next?";
+  if (/^\[suggestion mode:/i.test(ask.trim())) {
+    return "";
+  }
+  // Never use a generic greeting for real questions — caller should avoid
+  // greeting fallbacks outside chitchat/meta, but keep a non-greeting last resort.
+  return "I couldn't produce a clean plain-text answer. Please ask again.";
 }
 
 export function anthropicToChatMessages(
