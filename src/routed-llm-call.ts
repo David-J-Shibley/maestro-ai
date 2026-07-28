@@ -6,6 +6,7 @@ import {
   extractUserPrompt,
   hashPrompt,
 } from "./analyzer/task-analyzer.js";
+import { enrichAnalysisWithLlmClassify } from "./analyzer/llm-classify.js";
 import { loadConfig } from "./config/load-config.js";
 import { getPrimaryEndpoint } from "./config/tier-config.js";
 import {
@@ -82,7 +83,7 @@ export async function routedLLMCall(
   const userPrompt = extractLatestUserPrompt(input.messages);
   const systemPrompt = extractSystemPrompt(input.messages);
 
-  const analysis = analyzeTask({
+  let analysis = analyzeTask({
     userPrompt,
     systemPrompt,
     tools: input.tools,
@@ -91,6 +92,11 @@ export async function routedLLMCall(
     recentToolTurns:
       input.recentToolTurns ?? countRecentToolTurns(input.messages),
   });
+  analysis = await enrichAnalysisWithLlmClassify(
+    analysis,
+    userPrompt,
+    effectiveConfig
+  );
 
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;
   let unavailable = new Set<ModelTier>();
@@ -371,7 +377,7 @@ export async function dryRunRoute(
 
   const userPrompt = extractLatestUserPrompt(input.messages);
 
-  const analysis = analyzeTask({
+  let analysis = analyzeTask({
     userPrompt,
     systemPrompt: extractSystemPrompt(input.messages),
     tools: input.tools,
@@ -380,6 +386,11 @@ export async function dryRunRoute(
     recentToolTurns:
       input.recentToolTurns ?? countRecentToolTurns(input.messages),
   });
+  analysis = await enrichAnalysisWithLlmClassify(
+    analysis,
+    userPrompt,
+    effectiveConfig
+  );
 
   let unavailable = new Set<ModelTier>();
   let probe: Awaited<ReturnType<typeof probeAllTiers>> | undefined;

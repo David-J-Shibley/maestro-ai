@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-07-28
+
+### Added
+- **`routing.llmClassify`** — optional `local_fast` one-shot classify when heuristics are uncertain (`off` | `shadow` | `on`). Shadow logs disagreements without changing routes; `on` merges with fail-soft (LLM alone cannot clear the premium confidence gate). Enable in config: `"llmClassify": "shadow"`.
+
+[1.6.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.6.0
+
 ## [1.5.3] - 2026-07-28
 
 ### Fixed

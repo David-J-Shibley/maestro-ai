@@ -49,6 +49,15 @@ export {
   isTrivialChitchat,
 } from "./analyzer/task-analyzer.js";
 
+export {
+  enrichAnalysisWithLlmClassify,
+  mergeHeuristicAndLlm,
+  parseClassifyJson,
+  resolveLlmClassifyMode,
+  shouldRunLlmClassify,
+  type LlmClassifyMode,
+} from "./analyzer/llm-classify.js";
+
 export { loadConfig, loadConfigFromString, parseRouterConfig, attachPolicy } from "./config/load-config.js";
 export {
   applyRoutingPolicy,
