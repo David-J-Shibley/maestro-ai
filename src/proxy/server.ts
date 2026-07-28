@@ -642,11 +642,18 @@ async function streamRoutedAnthropic(opts: {
     return;
   }
 
-  // When Claude Code attaches tools but this turn doesn't need them, force a
-  // plain-text reply so local models don't emit fake Write/Bash JSON.
+  // When Claude Code attaches tools but this turn doesn't need them, omit tools.
+  // The buffered plain-reply + greeting-fallback path is ONLY for trivial chitchat —
+  // real Q&A (and harness meta like suggestion/recap) still omits tools but streams.
   const omitTools =
     profile.omitToolsWhenOmittable && !analysis.requiresToolUse;
-  const plainReply = omitTools && Array.isArray(tools) && tools.length > 0;
+  const askText = ask ?? "";
+  const softPlain =
+    omitTools &&
+    Array.isArray(tools) &&
+    tools.length > 0 &&
+    isTrivialChitchat(askText);
+  const plainReply = softPlain;
   const forwardTools = omitTools ? undefined : anthropicBody.tools;
   const forwardOpenAiTools = omitTools ? undefined : tools;
 
@@ -658,7 +665,7 @@ async function streamRoutedAnthropic(opts: {
       `streaming via ${routing.provider}/${routing.model} tier=${routing.tier} ` +
         `tools=${forwardTools?.length ?? 0}` +
         (tools?.length && !forwardTools ? ` (omitted ${tools.length})` : "") +
-        `${plainReply ? " plain=1" : ""} native=${useNative} reason=${JSON.stringify(routing.reason).slice(0, 80)} ` +
+        `${plainReply ? " plain=1" : omitTools ? " omit_tools=1" : ""} native=${useNative} reason=${JSON.stringify(routing.reason).slice(0, 80)} ` +
         `(decision ${Date.now() - started}ms)`
     );
   }
@@ -671,7 +678,14 @@ async function streamRoutedAnthropic(opts: {
         system: mergeAnthropicSystem(anthropicBody.system, PLAIN_TEXT_ONLY_HINT),
         messages: simplifyAnthropicMessagesForPlainReply(anthropicBody.messages),
       }
-    : { ...anthropicBody, tools: forwardTools };
+    : omitTools
+      ? {
+          ...anthropicBody,
+          tools: undefined,
+          tool_choice: undefined,
+          system: mergeAnthropicSystem(anthropicBody.system, PLAIN_TEXT_ONLY_HINT),
+        }
+      : { ...anthropicBody, tools: forwardTools };
 
   if (useNative) {
     if (plainReply) {
@@ -751,11 +765,18 @@ async function streamRoutedAnthropic(opts: {
   req.once("aborted", onAbort);
   res.once("close", onAbort);
 
+  const openAiMessages = omitTools
+    ? [
+        { role: "system" as const, content: PLAIN_TEXT_ONLY_HINT },
+        ...anthropicToChatMessages(anthropicBody.messages, anthropicBody.system),
+      ]
+    : upstreamMessages;
+
   try {
     for await (const chunk of chatCompletionStream(
       endpoint,
       routing.tier,
-      { messages: upstreamMessages, tools: forwardOpenAiTools, maxTokens },
+      { messages: openAiMessages, tools: forwardOpenAiTools, maxTokens },
       { signal: abort.signal }
     )) {
       if (abort.signal.aborted || !canWrite(res)) break;
@@ -771,7 +792,8 @@ async function streamRoutedAnthropic(opts: {
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${emitter.textLength}ch ` +
-        `stop=${stopReason} routed=${routing.model} tier=${routing.tier}`
+        `stop=${stopReason} routed=${routing.model} tier=${routing.tier}` +
+        `${omitTools ? " omit_tools=1" : ""}`
     );
   }
 }
@@ -1607,10 +1629,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           let outputTokens = 1;
           const omitTools =
             profile.omitToolsWhenOmittable && !analysis.requiresToolUse;
-          const plainReply =
+          const softPlain =
             omitTools &&
             Array.isArray(openAiTools) &&
-            openAiTools.length > 0;
+            openAiTools.length > 0 &&
+            isTrivialChitchat(humanAsk || "");
+          const plainReply = softPlain;
           const forwardTools = omitTools ? undefined : anthropicBody.tools;
           const forwardOpenAiTools = omitTools ? undefined : openAiTools;
 
@@ -1646,42 +1670,44 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
               inputTokens = 0;
               outputTokens = Math.max(1, Math.ceil(text.length / 4));
             } else {
-            const bodyForUpstream = {
-                  messages: anthropicBody.messages,
-                  system: anthropicBody.system,
-                };
-            const normalized = normalizeAnthropicSystem(
-              bodyForUpstream.messages,
-              bodyForUpstream.system
-            );
-            const native = await anthropicMessagesCompletion(
-              endpoint,
-              {
-                model: endpoint.model,
-                messages: normalized.messages,
-                max_tokens: maxTokens ?? 4096,
-                ...(normalized.system != null ? { system: normalized.system } : {}),
-                ...(forwardTools ? { tools: forwardTools } : {}),
-                ...(anthropicBody.tool_choice != null && forwardTools
-                  ? { tool_choice: anthropicBody.tool_choice }
-                  : {}),
-              },
-              { headers: forwardHeaders }
-            );
-            stopHeartbeat?.();
-            stopHeartbeat = undefined;
+              const bodyForUpstream = {
+                messages: anthropicBody.messages,
+                system: omitTools
+                  ? mergeAnthropicSystem(anthropicBody.system, PLAIN_TEXT_ONLY_HINT)
+                  : anthropicBody.system,
+              };
+              const normalized = normalizeAnthropicSystem(
+                bodyForUpstream.messages,
+                bodyForUpstream.system
+              );
+              const native = await anthropicMessagesCompletion(
+                endpoint,
+                {
+                  model: endpoint.model,
+                  messages: normalized.messages,
+                  max_tokens: maxTokens ?? 4096,
+                  ...(normalized.system != null ? { system: normalized.system } : {}),
+                  ...(forwardTools ? { tools: forwardTools } : {}),
+                  ...(anthropicBody.tool_choice != null && forwardTools
+                    ? { tool_choice: anthropicBody.tool_choice }
+                    : {}),
+                },
+                { headers: forwardHeaders }
+              );
+              stopHeartbeat?.();
+              stopHeartbeat = undefined;
 
               content = Array.isArray(native.content)
                 ? (native.content as Array<Record<string, unknown>>)
                 : [{ type: "text", text: asText(native.content) }];
               stopReason =
                 typeof native.stop_reason === "string" ? native.stop_reason : "end_turn";
-            const usage = native.usage as
-              | { input_tokens?: number; output_tokens?: number }
-              | undefined;
-            inputTokens = usage?.input_tokens ?? 0;
-            outputTokens = usage?.output_tokens ?? 1;
-            } // end else (!plainReply) native path
+              const usage = native.usage as
+                | { input_tokens?: number; output_tokens?: number }
+                | undefined;
+              inputTokens = usage?.input_tokens ?? 0;
+              outputTokens = usage?.output_tokens ?? 1;
+            }
           } else {
             const completion = await chatCompletionWithTools(endpoint, routing.tier, {
               messages: plainReply
@@ -1692,7 +1718,15 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
                       anthropicBody.system
                     ),
                   ]
-                : chatMessages,
+                : omitTools
+                  ? [
+                      { role: "system", content: PLAIN_TEXT_ONLY_HINT },
+                      ...anthropicToChatMessages(
+                        anthropicBody.messages,
+                        anthropicBody.system
+                      ),
+                    ]
+                  : chatMessages,
               tools: forwardOpenAiTools,
               maxTokens,
             });

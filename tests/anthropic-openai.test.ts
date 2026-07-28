@@ -5,6 +5,7 @@ import {
   coercePlainAssistantText,
   extractLatestAnthropicUserAsk,
   normalizeAnthropicSystem,
+  plainReplyFallback,
   unwrapFakeToolText,
 } from "../src/proxy/anthropic-openai.js";
 
@@ -151,5 +152,12 @@ describe("anthropic ↔ openai conversion", () => {
     const dump =
       '{"name": "Memory", "parameters": {"content": "[[tool]]\\n\\nThis is a memory entry for the tool that created the message.", "metadata": {"type": "feedback"}}';
     expect(coercePlainAssistantText(dump, "Hello!")).toBe("Hello!");
+  });
+
+  it("does not use the old greeting fallback for real questions", () => {
+    expect(plainReplyFallback("do you have memory that persists across instances?")).not.toBe(
+      "I'm here. What would you like to do next?"
+    );
+    expect(plainReplyFallback("hi")).toBe("Hello! How can I help you today?");
   });
 });

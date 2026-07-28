@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { analyzeTask } from "../src/analyzer/task-analyzer.js";
+import {
+  analyzeTask,
+  isHarnessMetaAsk,
+  isTrivialChitchat,
+} from "../src/analyzer/task-analyzer.js";
 
 describe("TaskAnalyzer", () => {
   it("classifies simple rewrite as easy local task", () => {
@@ -186,5 +190,27 @@ describe("TaskAnalyzer", () => {
     const analysis = analyzeTask({ userPrompt: "testing", tools });
     expect(analysis.requiresToolUse).toBe(false);
     expect(analysis.toolNeedScore).toBe(0);
+  });
+
+  it("treats conversational Q&A as tools-omittable (not chitchat)", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({
+      userPrompt: "do you have memory that persists across instances?",
+      tools,
+    });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(isTrivialChitchat("do you have memory that persists across instances?")).toBe(
+      false
+    );
+  });
+
+  it("treats Claude Code suggestion-mode as harness meta", () => {
+    const long =
+      "[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code. " +
+      "x".repeat(600);
+    expect(isHarnessMetaAsk(long)).toBe(true);
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({ userPrompt: long, tools });
+    expect(analysis.requiresToolUse).toBe(false);
   });
 });
