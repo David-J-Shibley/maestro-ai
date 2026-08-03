@@ -1,5 +1,5 @@
 import { evaluateResponse, evaluateResponseAsync } from "../evaluator/response-evaluator.js";
-import { estimateCostUsd } from "../telemetry/logger.js";
+import { sumAttemptCosts } from "../telemetry/logger.js";
 import { routedLLMCall, type RoutedLLMCallOptions } from "../routed-llm-call.js";
 import type { EvaluatorContext, RouterConfig } from "../types.js";
 import { executionLevels, shouldSkipStep } from "./dag.js";
@@ -218,7 +218,11 @@ async function runOneStep(
     analysis: result.analysis,
     evaluation,
     latencyMs: result.response.latencyMs,
-    estimatedCostUsd: estimateCostUsd(result.routing.tier, result.response.usage) ?? 0,
+    estimatedCostUsd: sumAttemptCosts(
+      result.attempts,
+      result.routing.tier,
+      result.response.usage
+    ),
     escalated: result.escalated,
     retries,
   };

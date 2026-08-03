@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSessionSpend } from "../src/telemetry/stats.js";
-import { recordUserFeedback } from "../src/telemetry/logger.js";
-import { handleStatsTool } from "../src/mcp/tools.js";
+import { readFileSync } from "node:fs";
+import { recordStructuredFeedback, recordUserFeedback } from "../src/telemetry/logger.js";
+import { handleStatsTool, handleFeedbackTool } from "../src/mcp/tools.js";
 import type { RouterConfig, TelemetryRecord } from "../src/types.js";
 
 function tempConfig(logPath: string): RouterConfig {
@@ -87,6 +88,78 @@ describe("session spend + feedback", () => {
 
     const spend = getSessionSpend(logPath, "x");
     expect(spend).toBe(0);
+  });
+
+  it("records structured rating and accepted, patching telemetry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "maestro-"));
+    const logPath = join(dir, "telemetry.jsonl");
+    writeFileSync(
+      logPath,
+      JSON.stringify({
+        id: "tid-2",
+        timestamp: "2026-01-01",
+        promptHash: "a",
+        taskAnalysis: {},
+        selectedTier: "local_fast",
+        selectedModel: "llama",
+        latencyMs: 10,
+        success: true,
+        routingReason: "ok",
+        attempts: 1,
+      }) + "\n"
+    );
+
+    const config = tempConfig(logPath);
+    recordStructuredFeedback(config, {
+      telemetryId: "tid-2",
+      rating: 4,
+      accepted: true,
+      feedback: "solid",
+    });
+
+    const patched = JSON.parse(readFileSync(logPath, "utf8").trim()) as TelemetryRecord;
+    expect(patched.userRating).toBe(4);
+    expect(patched.userAccepted).toBe(true);
+    expect(patched.userFeedback).toBe("solid");
+  });
+});
+
+describe("feedback MCP tool", () => {
+  it("accepts rating and accepted without a note", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "maestro-"));
+    const logPath = join(dir, "telemetry.jsonl");
+    writeFileSync(logPath, "");
+    const configPath = join(dir, "config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        models: {
+          local_fast: { primary: { provider: "ollama", model: "llama", baseUrl: "http://x" } },
+          local_strong: { primary: { provider: "ollama", model: "qwen", baseUrl: "http://x" } },
+          hosted_oss: { primary: { provider: "litellm", model: "q", baseUrl: "http://x" } },
+          premium: { primary: { provider: "litellm", model: "s", baseUrl: "http://x" } },
+        },
+        routing: {
+          defaultTier: "local_fast",
+          maxRetriesPerTier: 1,
+          enableEscalation: true,
+          preferLocal: true,
+          longContextTokenThreshold: 32000,
+          probeAvailability: false,
+        },
+        telemetry: { enabled: true, logPath },
+      })
+    );
+
+    const result = await handleFeedbackTool({
+      telemetry_id: "tid-x",
+      rating: 5,
+      accepted: true,
+      config_path: configPath,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.rating).toBe(5);
+    expect(result.accepted).toBe(true);
   });
 });
 

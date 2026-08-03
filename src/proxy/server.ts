@@ -11,6 +11,7 @@ import { getPrimaryEndpoint } from "../config/tier-config.js";
 import { dryRunRoute } from "../routed-llm-call.js";
 import { chatCompletionStream, chatCompletionWithTools } from "../provider/stream.js";
 import type { StreamChunk, StreamToolCallDelta } from "../provider/stream.js";
+import { resolveConnectivity } from "../provider/connectivity.js";
 import {
   anthropicMessagesCompletion,
   anthropicMessagesStream,
@@ -57,7 +58,7 @@ import {
   sanitizeAnthropicSseEvent,
   scrubAnthropicMessages,
 } from "./sanitize-anthropic-sse.js";
-import { recordUserFeedback } from "../telemetry/logger.js";
+import { recordStructuredFeedback } from "../telemetry/logger.js";
 import type {
   ChatMessage,
   ModelTier,
@@ -1473,6 +1474,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
     }
 
     if (req.method === "GET" && (path === "/status" || path === "/v1/status")) {
+      const connectivity = await resolveConnectivity(config);
       sendJson(res, 200, {
         ok: true,
         service: "maestro-proxy",
@@ -1484,6 +1486,12 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         maxTier: options.maxTier ?? null,
         preferLocal: Boolean(options.alwaysPreferLocal || profile.stickyLocalBias),
         sessionId: options.sessionId ?? ephemeralSessionId,
+        connectivity: {
+          online: connectivity.online,
+          reason: connectivity.reason,
+          source: connectivity.source,
+          localOnlyForced: connectivity.localOnlyForced,
+        },
         recentRoutes: getRouteLog(),
       });
       return;
@@ -1497,27 +1505,41 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           rating?: string | number;
           note?: string;
           feedback?: string;
+          accepted?: boolean | string;
           lastRequestId?: string;
           telemetryId?: string;
         };
-        const feedback =
-          body.feedback ||
-          body.note ||
-          (body.rating != null ? String(body.rating) : "");
-        if (!feedback.trim()) {
+        const ratingNum =
+          typeof body.rating === "number"
+            ? body.rating
+            : typeof body.rating === "string" && body.rating.trim()
+              ? parseInt(body.rating, 10)
+              : undefined;
+        const accepted =
+          body.accepted === true || body.accepted === "true"
+            ? true
+            : body.accepted === false || body.accepted === "false"
+              ? false
+              : undefined;
+        const note = (body.feedback || body.note || "").trim();
+        if (!note && ratingNum == null && accepted == null) {
           sendJson(res, 400, {
             type: "error",
-            error: { type: "invalid_request_error", message: "feedback or note required" },
+            error: {
+              type: "invalid_request_error",
+              message: "feedback, note, rating (1-5), or accepted required",
+            },
           });
           return;
         }
-        const id = recordUserFeedback(
-          config,
-          body.telemetryId || body.lastRequestId || "proxy-feedback",
-          feedback.trim(),
-          body.sessionId || options.sessionId || ephemeralSessionId
-        );
-        sendJson(res, 200, { ok: true, id });
+        const id = recordStructuredFeedback(config, {
+          telemetryId: body.telemetryId || body.lastRequestId || "proxy-feedback",
+          feedback: note || undefined,
+          rating: ratingNum,
+          accepted,
+          sessionId: body.sessionId || options.sessionId || ephemeralSessionId,
+        });
+        sendJson(res, 200, { ok: true, id, rating: ratingNum ?? null, accepted: accepted ?? null });
       } catch (err) {
         sendJson(res, 400, {
           type: "error",

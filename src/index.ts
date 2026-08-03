@@ -89,6 +89,14 @@ export {
   routedLLMStream,
 } from "./provider/stream.js";
 export { probeAllTiers, probeEndpoint, probeTier, clearProbeCache } from "./provider/probe.js";
+export {
+  applyOfflineLocalOnlyOverrides,
+  checkInternet,
+  clearConnectivityCache,
+  isOfflineFromProbe,
+  resolveConnectivity,
+  type ConnectivityStatus,
+} from "./provider/connectivity.js";
 
 export { routeTask } from "./router/model-router.js";
 export { buildRoutingReport, compactRoutingReport } from "./routing/report.js";
@@ -152,8 +160,17 @@ export { planWorkflow, selectWorkflowPattern } from "./workflow/planner.js";
 export { formatExecutionReport } from "./workflow/report.js";
 export { executionLevels } from "./workflow/dag.js";
 
-export { estimateCostUsd, logTelemetry, recordUserFeedback } from "./telemetry/logger.js";
-export type { FeedbackRecord } from "./telemetry/logger.js";
+export {
+  estimateCostUsd,
+  estimatePremiumCostUsd,
+  sumAttemptCosts,
+  logTelemetry,
+  recordUserFeedback,
+  recordStructuredFeedback,
+  TIER_RATES_PER_MTOK,
+} from "./telemetry/logger.js";
+export type { FeedbackRecord, RecordFeedbackInput } from "./telemetry/logger.js";
+export { makeShellHook, buildEvaluatorHooks } from "./evaluator/shell-hooks.js";
 export {
   computeTelemetryStats,
   formatStatsReport,

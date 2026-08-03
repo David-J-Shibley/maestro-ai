@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { expandPath } from "../config/load-config.js";
 import type { ModelTier, TelemetryRecord, TaskType } from "../types.js";
+import { estimatePremiumCostUsd } from "./logger.js";
 import { servedTier, servedModel } from "./records.js";
 
 export interface TelemetryStats {
@@ -9,11 +10,24 @@ export interface TelemetryStats {
   escalationRate: number;
   avgLatencyMs: number;
   totalEstimatedCostUsd: number;
+  /** Counterfactual: same tokens billed at premium rates */
+  estimatedPremiumCostUsd: number;
+  /** premiumCost - actualCost (when positive) */
+  estimatedSavingsUsd: number;
+  /** savings / premiumCost when premiumCost > 0 */
+  savingsRate: number;
+  /** Fraction of records with userAccepted === true among those with a rating/accepted signal */
+  acceptanceRate: number | null;
+  avgUserRating: number | null;
   tierDistribution: Record<string, number>;
   modelDistribution: Record<string, number>;
   modeDistribution: Record<string, number>;
   modeSuccessRates: Record<string, { successRate: number; count: number }>;
   recentFailures: Array<{ timestamp: string; reason: string; tier: string }>;
+}
+
+function recordCost(r: TelemetryRecord): number {
+  return r.totalEstimatedCostUsd ?? r.estimatedCostUsd ?? 0;
 }
 
 export function loadTelemetryRecords(
@@ -44,7 +58,7 @@ export function loadAllTelemetryRecords(logPath: string): TelemetryRecord[] {
 export function getSessionSpend(logPath: string, sessionId: string): number {
   return loadAllTelemetryRecords(logPath)
     .filter((r) => r.sessionId === sessionId)
-    .reduce((sum, r) => sum + (r.estimatedCostUsd ?? 0), 0);
+    .reduce((sum, r) => sum + recordCost(r), 0);
 }
 
 export interface HistoricalSuccessRate {
@@ -90,6 +104,11 @@ export function computeTelemetryStats(
       escalationRate: 0,
       avgLatencyMs: 0,
       totalEstimatedCostUsd: 0,
+      estimatedPremiumCostUsd: 0,
+      estimatedSavingsUsd: 0,
+      savingsRate: 0,
+      acceptanceRate: null,
+      avgUserRating: null,
       tierDistribution: {},
       modelDistribution: {},
       modeDistribution: {},
@@ -106,6 +125,11 @@ export function computeTelemetryStats(
   let escalations = 0;
   let latencySum = 0;
   let costSum = 0;
+  let premiumCostSum = 0;
+  let acceptedCount = 0;
+  let acceptedKnown = 0;
+  let ratingSum = 0;
+  let ratingCount = 0;
 
   for (const r of records) {
     // Attribute to the tier/model that actually served the call: the fallback
@@ -125,7 +149,16 @@ export function computeTelemetryStats(
     if (r.success) successes++;
     if (r.escalated) escalations++;
     latencySum += r.latencyMs;
-    costSum += r.estimatedCostUsd ?? 0;
+    costSum += recordCost(r);
+    premiumCostSum += estimatePremiumCostUsd(r.tokenUsage) ?? 0;
+    if (r.userAccepted != null) {
+      acceptedKnown++;
+      if (r.userAccepted) acceptedCount++;
+    }
+    if (r.userRating != null) {
+      ratingSum += r.userRating;
+      ratingCount++;
+    }
   }
 
   const modeSuccessRates: Record<string, { successRate: number; count: number }> = {};
@@ -145,12 +178,19 @@ export function computeTelemetryStats(
       tier: servedTier(r),
     }));
 
+  const estimatedSavingsUsd = Math.max(0, premiumCostSum - costSum);
+
   return {
     total: records.length,
     successRate: successes / records.length,
     escalationRate: escalations / records.length,
     avgLatencyMs: latencySum / records.length,
     totalEstimatedCostUsd: costSum,
+    estimatedPremiumCostUsd: premiumCostSum,
+    estimatedSavingsUsd,
+    savingsRate: premiumCostSum > 0 ? estimatedSavingsUsd / premiumCostSum : 0,
+    acceptanceRate: acceptedKnown > 0 ? acceptedCount / acceptedKnown : null,
+    avgUserRating: ratingCount > 0 ? ratingSum / ratingCount : null,
     tierDistribution,
     modelDistribution,
     modeDistribution,
@@ -167,9 +207,21 @@ export function formatStatsReport(stats: TelemetryStats, limit: number): string 
     `Escalation rate:  ${(stats.escalationRate * 100).toFixed(1)}%`,
     `Avg latency:      ${stats.avgLatencyMs.toFixed(0)}ms`,
     `Est. total cost:  $${stats.totalEstimatedCostUsd.toFixed(4)}`,
-    "",
-    "Tier distribution:",
+    `Vs always-premium: $${stats.estimatedPremiumCostUsd.toFixed(4)} → save $${stats.estimatedSavingsUsd.toFixed(4)} (${(stats.savingsRate * 100).toFixed(0)}%)`,
   ];
+
+  if (stats.acceptanceRate != null || stats.avgUserRating != null) {
+    const parts: string[] = [];
+    if (stats.acceptanceRate != null) {
+      parts.push(`accept ${(stats.acceptanceRate * 100).toFixed(0)}%`);
+    }
+    if (stats.avgUserRating != null) {
+      parts.push(`avg rating ${stats.avgUserRating.toFixed(1)}/5`);
+    }
+    lines.push(`Feedback:         ${parts.join(" | ")}`);
+  }
+
+  lines.push("", "Tier distribution:");
 
   for (const [tier, count] of Object.entries(stats.tierDistribution)) {
     lines.push(`  ${tier.padEnd(14)} ${count}`);

@@ -133,6 +133,15 @@ Telemetry becomes training data for routing nudges:
 
 Deterministic rules remain the floor; learned weights sit on top. Online bandits / weight training remain future work.
 
+### v1.7 — Verification hooks + cost/feedback truth ✅
+
+Close the “plausible but wrong” gap and make cost/feedback usable for learning:
+
+- CLI/MCP `--run-tests` / `--run-build` shell hooks → evaluator `tests_pass` / `build_pass`
+- Sum retry/escalation cost (`totalEstimatedCostUsd`); budget accounts for in-flight spend
+- Structured feedback (`rating` 1–5, `accepted`) feeds analyze/learned recommendations
+- Stats: savings vs always-premium counterfactual
+
 ## Defining capability: Explain Your Decision
 
 Every routed request includes a structured and human-readable explanation.

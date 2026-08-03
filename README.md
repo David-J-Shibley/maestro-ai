@@ -111,7 +111,7 @@ claude mcp add maestro-ai -- node <path-to>/dist/mcp-server.js
 | `maestro_doctor` | Infrastructure diagnostics (process, port, `/v1/models`, env vars) |
 | `maestro_stats` | Telemetry summary — tier mix, escalation rate, latency, cost (`insights: true` for routing analysis) |
 | `maestro_analyze` | Per-task routing insights, recommendations, learned-routing readiness |
-| `maestro_feedback` | Record good/bad feedback on a prior `maestro_ask` response |
+| `maestro_feedback` | Structured feedback: `rating` (1–5), `accepted`, optional note |
 
 ### MCP response shape
 
@@ -201,6 +201,7 @@ Opt-in hints in `~/.maestro-ai/config.json`:
 
 - **`learnedRoutingHints`** — nudge tier from telemetry when confidence is high enough.
 - **`llmClassify`** — `off` (default) | `shadow` | `on`. When heuristics are uncertain, call `local_fast` for a tiny JSON classify. Shadow only logs disagreements (`llm_classify_diff=…` in signals / `/status`); `on` merges into routing with fail-soft (cannot solo-force premium).
+- **`offlineLocalOnly`** — default `true`. When offline (no internet, or cloud tiers unreachable while local is up), force `maxTier: local_strong`. Disable with `"offlineLocalOnly": false`. See `connectivity` on `GET /status`.
 
 ### Workflow orchestration (v1.0+)
 
@@ -216,9 +217,14 @@ Maestro chooses an **execution strategy**, not just a model:
 | `extract` | Extract → normalize → validate JSON |
 
 ```bash
-maestro ask "build auth middleware" --workflow implement-test-fix --debug
+maestro ask "build auth middleware" --workflow implement-test-fix \
+  --run-tests "npm test" --run-build "npm run build" --debug
 maestro ask "compare these approaches" --workflow parallel-synthesis
 maestro ask "review this RFC" --workflow critique --dry-run-workflow
+
+# After a call, feed structured feedback into learned routing:
+maestro feedback <telemetry-id> --rating 4 --accepted --note "good enough"
+maestro stats --last 50   # includes savings vs always-premium
 ```
 
 Programmatic API:

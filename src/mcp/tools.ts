@@ -10,9 +10,10 @@ import { runDoctor } from "../doctor/health.js";
 import { computeTelemetryStats, loadAllTelemetryRecords, loadTelemetryRecords } from "../telemetry/stats.js";
 import { computeRoutingInsights, formatInsightsReport } from "../telemetry/analysis.js";
 import { learnedRoutingAvailable } from "../routing/learned.js";
-import { recordUserFeedback } from "../telemetry/logger.js";
+import { recordStructuredFeedback } from "../telemetry/logger.js";
+import { buildEvaluatorHooks } from "../evaluator/shell-hooks.js";
 import { dryRunWorkflow, runWorkflow } from "../workflow/run-workflow.js";
-import type { ChatMessage, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
+import type { ChatMessage, EvaluatorContext, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
 import type {
   AnalyzeToolInput,
   AskToolInput,
@@ -99,6 +100,15 @@ export async function handleRouteTool(input: RouteToolInput) {
   return presentReport(report, input.debug);
 }
 
+function buildAskEvaluatorContext(input: AskToolInput | WorkflowToolInput): EvaluatorContext | undefined {
+  const hooks = buildEvaluatorHooks({
+    runTests: input.run_tests,
+    runBuild: input.run_build,
+  });
+  if (!hooks.runTests && !hooks.runBuild) return undefined;
+  return hooks;
+}
+
 export async function handleAskTool(input: AskToolInput) {
   if (input.workflow || input.dry_run_workflow) {
     return handleWorkflowTool({
@@ -113,6 +123,7 @@ export async function handleAskTool(input: AskToolInput) {
     ...buildOverrides(input),
     dryRunRouting: input.dry_run ?? false,
   };
+  const evaluatorContext = buildAskEvaluatorContext(input);
 
   const result = await routedLLMCall(
     {
@@ -121,7 +132,7 @@ export async function handleAskTool(input: AskToolInput) {
       taskHints: buildTaskHints(input),
       overrides,
     },
-    { config }
+    { config, evaluatorContext }
   );
 
   const report = buildRoutingReport({
@@ -217,7 +228,7 @@ export async function handleWorkflowTool(input: WorkflowToolInput) {
       overrides,
       workflow,
     },
-    { config }
+    { config, evaluatorContext: buildAskEvaluatorContext(input) }
   );
 
   return {
@@ -326,7 +337,14 @@ function formatStatsInline(
     `Records: ${stats.total} (last ${limit})`,
     `Success: ${(stats.successRate * 100).toFixed(1)}% | Escalation: ${(stats.escalationRate * 100).toFixed(1)}%`,
     `Avg latency: ${stats.avgLatencyMs.toFixed(0)}ms | Est. cost: $${stats.totalEstimatedCostUsd.toFixed(4)}`,
+    `Vs premium: $${stats.estimatedPremiumCostUsd.toFixed(4)} → save $${stats.estimatedSavingsUsd.toFixed(4)} (${(stats.savingsRate * 100).toFixed(0)}%)`,
   ];
+  if (stats.acceptanceRate != null || stats.avgUserRating != null) {
+    const parts: string[] = [];
+    if (stats.acceptanceRate != null) parts.push(`accept ${(stats.acceptanceRate * 100).toFixed(0)}%`);
+    if (stats.avgUserRating != null) parts.push(`rating ${stats.avgUserRating.toFixed(1)}/5`);
+    lines.push(`Feedback: ${parts.join(" | ")}`);
+  }
   for (const [tier, count] of Object.entries(stats.tierDistribution)) {
     lines.push(`  ${tier}: ${count}`);
   }
@@ -335,16 +353,26 @@ function formatStatsInline(
 
 export async function handleFeedbackTool(input: FeedbackToolInput) {
   const config = loadConfig(input.config_path);
-  const feedbackId = recordUserFeedback(
-    config,
-    input.telemetry_id,
-    input.feedback,
-    input.session_id
-  );
+  if (
+    input.feedback == null &&
+    input.rating == null &&
+    input.accepted == null
+  ) {
+    throw new Error("Provide feedback, rating (1-5), or accepted");
+  }
+  const feedbackId = recordStructuredFeedback(config, {
+    telemetryId: input.telemetry_id,
+    feedback: input.feedback,
+    sessionId: input.session_id,
+    rating: input.rating,
+    accepted: input.accepted,
+  });
   return {
     ok: true,
     feedback_id: feedbackId,
     telemetry_id: input.telemetry_id,
+    rating: input.rating ?? null,
+    accepted: input.accepted ?? null,
   };
 }
 

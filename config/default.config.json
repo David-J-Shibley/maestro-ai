@@ -60,7 +60,8 @@
     "probeOnDryRun": false,
     "learnedRoutingHints": true,
     "learnedMinSamples": 5,
-    "llmClassify": "off"
+    "llmClassify": "off",
+    "offlineLocalOnly": true
   },
   "telemetry": {
     "enabled": true,

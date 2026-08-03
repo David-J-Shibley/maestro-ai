@@ -104,6 +104,18 @@ export const askToolInputSchema = routeToolInputSchema.extend({
     .boolean()
     .optional()
     .describe("If true with workflow, preview the plan without executing LLM steps."),
+  run_tests: z
+    .string()
+    .optional()
+    .describe(
+      "Shell command to run as the tests_pass evaluator check (exit 0 = pass). Enables implement-test-fix recovery."
+    ),
+  run_build: z
+    .string()
+    .optional()
+    .describe(
+      "Shell command to run as the build_pass evaluator check (exit 0 = pass)."
+    ),
 });
 
 export const workflowToolInputSchema = askToolInputSchema.extend({
@@ -154,8 +166,18 @@ export const feedbackToolInputSchema = z.object({
   telemetry_id: z.string().describe("Telemetry ID from a prior maestro_ask response."),
   feedback: z
     .string()
+    .optional()
+    .describe("Optional note: e.g. 'good', 'bad', or a short comment."),
+  rating: z
+    .number()
     .min(1)
-    .describe("User feedback: e.g. 'good', 'bad', or a short note."),
+    .max(5)
+    .optional()
+    .describe("Structured quality rating from 1 (poor) to 5 (excellent)."),
+  accepted: z
+    .boolean()
+    .optional()
+    .describe("Whether the user/agent accepted the result (feeds learned routing)."),
   session_id: z.string().optional().describe("Optional session ID for correlation."),
   config_path: z.string().optional().describe("Path to Maestro AI config JSON."),
 });

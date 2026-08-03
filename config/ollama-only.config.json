@@ -19,7 +19,7 @@
     "hosted_oss": {
       "primary": {
         "provider": "ollama",
-        "model": "qwen3:8b",
+        "model": "qwen2.5-coder:14b",
         "baseUrl": "http://localhost:11434/v1",
         "timeoutMs": 300000
       }

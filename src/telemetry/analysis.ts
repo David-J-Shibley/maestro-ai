@@ -13,6 +13,9 @@ export interface TierTaskCell {
   avgCostUsd: number;
   /** Fraction of records with plain_coerced / plain_fallback outcomes */
   coerceRate?: number;
+  /** Among records with userAccepted set */
+  acceptanceRate?: number | null;
+  avgRating?: number | null;
   difficulty?: import("../types.js").TaskDifficulty;
   requiresToolUse?: boolean;
   mode?: string;
@@ -123,6 +126,10 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       coerces: number;
       latencySum: number;
       costSum: number;
+      accepted: number;
+      acceptedKnown: number;
+      ratingSum: number;
+      ratingCount: number;
     }
   >();
 
@@ -149,6 +156,10 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       coerces: 0,
       latencySum: 0,
       costSum: 0,
+      accepted: 0,
+      acceptedKnown: 0,
+      ratingSum: 0,
+      ratingCount: 0,
     };
 
     bucket.total++;
@@ -161,7 +172,15 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       bucket.coerces++;
     }
     bucket.latencySum += record.latencyMs;
-    bucket.costSum += record.estimatedCostUsd ?? 0;
+    bucket.costSum += record.totalEstimatedCostUsd ?? record.estimatedCostUsd ?? 0;
+    if (record.userAccepted != null) {
+      bucket.acceptedKnown++;
+      if (record.userAccepted) bucket.accepted++;
+    }
+    if (record.userRating != null) {
+      bucket.ratingSum += record.userRating;
+      bucket.ratingCount++;
+    }
     buckets.set(key, bucket);
   }
 
@@ -176,11 +195,24 @@ function aggregateCells(records: TelemetryRecord[]): TierTaskCell[] {
       avgLatencyMs: b.latencySum / b.total,
       avgCostUsd: b.costSum / b.total,
       coerceRate: b.coerces / b.total,
+      acceptanceRate: b.acceptedKnown > 0 ? b.accepted / b.acceptedKnown : null,
+      avgRating: b.ratingCount > 0 ? b.ratingSum / b.ratingCount : null,
       difficulty: b.difficulty,
       requiresToolUse: b.requiresToolUse,
       mode: b.mode,
     }))
     .sort((a, b) => b.count - a.count);
+}
+
+/** Blend success with user acceptance/rating when available. */
+function effectiveQuality(cell: TierTaskCell): number {
+  let score = cell.successRate;
+  if (cell.acceptanceRate != null) {
+    score = score * 0.6 + cell.acceptanceRate * 0.4;
+  } else if (cell.avgRating != null) {
+    score = score * 0.7 + (cell.avgRating / 5) * 0.3;
+  }
+  return score;
 }
 
 function buildRecommendations(
@@ -201,7 +233,9 @@ function buildRecommendations(
     if (eligible.length === 0) continue;
 
     const sorted = [...eligible].sort((a, b) => {
-      if (b.successRate !== a.successRate) return b.successRate - a.successRate;
+      const scoreA = effectiveQuality(a);
+      const scoreB = effectiveQuality(b);
+      if (scoreB !== scoreA) return scoreB - scoreA;
       const tierDiff =
         TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier);
       if (tierDiff !== 0) return tierDiff;
@@ -209,13 +243,19 @@ function buildRecommendations(
     });
 
     const best = sorted[0]!;
+    const feedbackNote =
+      best.acceptanceRate != null
+        ? `, ${(best.acceptanceRate * 100).toFixed(0)}% accepted`
+        : best.avgRating != null
+          ? `, avg rating ${best.avgRating.toFixed(1)}/5`
+          : "";
     recommendations.push({
       taskType,
       recommendedTier: best.tier,
       recommendedModel: best.model,
       successRate: best.successRate,
       sampleSize: best.count,
-      reason: `${(best.successRate * 100).toFixed(0)}% success over ${best.count} ${taskType} calls on ${best.tier}`,
+      reason: `${(best.successRate * 100).toFixed(0)}% success over ${best.count} ${taskType} calls on ${best.tier}${feedbackNote}`,
       alternatives: sorted.slice(1, 4).map((c) => ({
         tier: c.tier,
         model: c.model,
@@ -280,6 +320,18 @@ function buildFindings(
       `${cell.taskType} on ${cell.tier} needed plain-reply coercion ${(
         (cell.coerceRate ?? 0) * 100
       ).toFixed(0)}% of the time (n=${cell.count})`
+    );
+  }
+
+  const lowAccept = cells.filter(
+    (c) =>
+      c.count >= minSamples &&
+      c.acceptanceRate != null &&
+      c.acceptanceRate < 0.5
+  );
+  for (const cell of lowAccept.slice(0, 2)) {
+    findings.push(
+      `${cell.taskType} on ${cell.tier} accepted only ${((cell.acceptanceRate ?? 0) * 100).toFixed(0)}% of the time (n=${cell.count})`
     );
   }
 

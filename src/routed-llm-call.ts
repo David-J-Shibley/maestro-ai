@@ -17,6 +17,11 @@ import {
 import { evaluateResponse, evaluateResponseAsync } from "./evaluator/response-evaluator.js";
 import { chatCompletion, DEFAULT_MAX_TOKENS, ProviderError } from "./provider/openai-compatible.js";
 import { probeAllTiers, type TierProbeStatus } from "./provider/probe.js";
+import {
+  applyOfflineLocalOnlyOverrides,
+  resolveConnectivity,
+  type ConnectivityStatus,
+} from "./provider/connectivity.js";
 import { routeTask } from "./router/model-router.js";
 import { annotateAttemptActions, buildAttemptLog } from "./routing/outcome.js";
 import {
@@ -24,10 +29,12 @@ import {
   canEscalateWithinMode,
   resolveActiveMode,
 } from "./routing/modes.js";
-import { estimateCostUsd, logTelemetry } from "./telemetry/logger.js";
+import { estimateCostUsd, logTelemetry, sumAttemptCosts } from "./telemetry/logger.js";
 import {
   canEscalateWithinBudget,
   resolveBudgetStatus,
+  tierCapForBudget,
+  type BudgetStatus,
 } from "./routing/budget.js";
 import type {
   AttemptAction,
@@ -56,6 +63,7 @@ export interface DryRunResult {
   analysis: TaskAnalysis;
   routing: RoutingDecision;
   probe?: Awaited<ReturnType<typeof probeAllTiers>>;
+  connectivity?: ConnectivityStatus;
 }
 
 function tierStatusMap(
@@ -71,14 +79,19 @@ function tierStatusMap(
 export async function routedLLMCall(
   input: RoutedLLMCallInput,
   options: RoutedLLMCallOptions = {}
-): Promise<RoutedLLMCallResult & { probe?: DryRunResult["probe"] }> {
+): Promise<
+  RoutedLLMCallResult & {
+    probe?: DryRunResult["probe"];
+    connectivity?: ConnectivityStatus;
+  }
+> {
   const config = options.config ?? loadConfig(options.configPath);
   const baseOverrides = mergeOverrides(input.overrides, options.overrides);
   const activeMode = resolveActiveMode(baseOverrides, config);
   const runtime = applyModeToRuntime(activeMode, config, baseOverrides);
   const overrides = runtime.overrides;
   const effectiveConfig: RouterConfig = { ...config, routing: runtime.routing };
-  const modeConstraints = runtime.constraints;
+  let modeConstraints = runtime.constraints;
 
   const userPrompt = extractLatestUserPrompt(input.messages);
   const systemPrompt = extractSystemPrompt(input.messages);
@@ -105,13 +118,32 @@ export async function routedLLMCall(
     unavailable = probe.unavailable;
   }
 
+  const connectivity = await resolveConnectivity(effectiveConfig, probe);
+  const offlineApplied = applyOfflineLocalOnlyOverrides(
+    overrides,
+    connectivity,
+    effectiveConfig
+  );
+  const routeOverrides = offlineApplied.overrides;
+  if (offlineApplied.forced) {
+    modeConstraints = {
+      ...modeConstraints,
+      maxTier: "local_strong",
+      preferLocal: true,
+      notes: [
+        ...modeConstraints.notes,
+        ...(offlineApplied.note ? [offlineApplied.note] : []),
+      ],
+    };
+  }
+
   const statuses = tierStatusMap(probe);
-  const budget = resolveBudgetStatus(overrides?.session, effectiveConfig);
+  let budget = resolveBudgetStatus(routeOverrides?.session, effectiveConfig);
 
   let decision = routeTask({
     analysis,
     config: effectiveConfig,
-    overrides,
+    overrides: routeOverrides,
     taskHints: input.taskHints,
     unavailableTiers: unavailable,
     tierStatuses: statuses,
@@ -122,7 +154,7 @@ export async function routedLLMCall(
     decision = routeTask({
       analysis,
       config: effectiveConfig,
-      overrides: { ...overrides, modelTier: input.modelTier },
+      overrides: { ...routeOverrides, modelTier: input.modelTier },
       taskHints: input.taskHints,
       unavailableTiers: unavailable,
       tierStatuses: statuses,
@@ -130,10 +162,25 @@ export async function routedLLMCall(
     });
   }
 
+  if (offlineApplied.forced && offlineApplied.note) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}; ${offlineApplied.note}`,
+      debug: [...(decision.debug ?? []), offlineApplied.note],
+    };
+  }
+
   const initialRouting = { ...decision };
 
-  if (overrides.dryRunRouting) {
-    return { ...dryRunResult(analysis, decision, initialRouting), probe };
+  if (routeOverrides.dryRunRouting) {
+    return {
+      ...dryRunResult(analysis, decision, initialRouting),
+      probe,
+      connectivity,
+    } as RoutedLLMCallResult & {
+      probe?: DryRunResult["probe"];
+      connectivity?: ConnectivityStatus;
+    };
   }
 
   const attempts: RoutedAttempt[] = [];
@@ -183,6 +230,8 @@ export async function routedLLMCall(
       });
 
       attempt.latencyMs = response.latencyMs;
+      attempt.usage = response.usage;
+      attempt.estimatedCostUsd = estimateCostUsd(currentTier, response.usage);
       attempts.push(attempt);
       lastResponse = response;
       tierAttemptCount++;
@@ -223,6 +272,7 @@ export async function routedLLMCall(
       if (evaluation.escalationRecommended && effectiveConfig.routing.enableEscalation) {
         const next = nextTier(currentTier);
         if (next && next !== currentTier) {
+          budget = refreshBudget(budget, overrides?.session, effectiveConfig, attempts);
           if (
             !canEscalateWithinBudget(next, budget) ||
             !canEscalateWithinMode(next, modeConstraints)
@@ -282,6 +332,7 @@ export async function routedLLMCall(
 
         const next = nextTier(currentTier);
         if (next && next !== currentTier) {
+          budget = refreshBudget(budget, overrides?.session, effectiveConfig, attempts);
           if (
             !canEscalateWithinBudget(next, budget) ||
             !canEscalateWithinMode(next, modeConstraints)
@@ -305,6 +356,8 @@ export async function routedLLMCall(
 
   const finalAttempts = annotateAttemptActions(attempts);
   const attemptLog = buildAttemptLog(finalAttempts);
+  const totalCost = sumAttemptCosts(finalAttempts, currentTier, lastResponse.usage);
+  const finalAttemptCost = estimateCostUsd(currentTier, lastResponse.usage);
 
   const finalStatus = statuses.get(currentTier);
   const finalEndpoint =
@@ -324,7 +377,8 @@ export async function routedLLMCall(
     fallbackModel: escalated ? finalEndpoint.model : undefined,
     latencyMs: lastResponse.latencyMs,
     tokenUsage: lastResponse.usage,
-    estimatedCostUsd: estimateCostUsd(currentTier, lastResponse.usage),
+    estimatedCostUsd: finalAttemptCost ?? totalCost,
+    totalEstimatedCostUsd: totalCost,
     success: lastEvaluation.pass,
     evaluatorResult: lastEvaluation,
     routingReason: initialRouting.reason,
@@ -361,6 +415,7 @@ export async function routedLLMCall(
     escalated,
     attempts: finalAttempts,
     probe,
+    connectivity,
   };
 }
 
@@ -408,17 +463,33 @@ export async function dryRunRoute(
     unavailable = probe.unavailable;
   }
 
-  const routing = routeTask({
+  const connectivity = await resolveConnectivity(effectiveConfig, probe);
+  const offlineApplied = applyOfflineLocalOnlyOverrides(
+    overrides,
+    connectivity,
+    effectiveConfig
+  );
+  const routeOverrides = offlineApplied.overrides;
+
+  let routing = routeTask({
     analysis,
     config: effectiveConfig,
-    overrides,
+    overrides: routeOverrides,
     taskHints: input.taskHints,
     unavailableTiers: unavailable,
     tierStatuses: tierStatusMap(probe),
     userPrompt,
   });
 
-  return { analysis, routing, probe };
+  if (offlineApplied.forced && offlineApplied.note) {
+    routing = {
+      ...routing,
+      reason: `${routing.reason}; ${offlineApplied.note}`,
+      debug: [...(routing.debug ?? []), offlineApplied.note],
+    };
+  }
+
+  return { analysis, routing, probe, connectivity };
 }
 
 export function mergeOverrides(
@@ -437,6 +508,27 @@ export function mergeOverrides(
             ...b.session,
           }
         : undefined,
+  };
+}
+
+/** Recompute remaining budget including in-flight attempt costs not yet logged. */
+function refreshBudget(
+  budget: BudgetStatus | null,
+  session: RouterOverrides["session"] | undefined,
+  config: RouterConfig,
+  attempts: RoutedAttempt[]
+): BudgetStatus | null {
+  if (!budget || session?.budgetUsd === undefined) return budget;
+  const base = resolveBudgetStatus(session, config);
+  if (!base) return budget;
+  const inFlight = sumAttemptCosts(attempts);
+  const spentUsd = base.spentUsd + inFlight;
+  const remainingUsd = Math.max(0, base.budgetUsd - spentUsd);
+  return {
+    ...base,
+    spentUsd,
+    remainingUsd,
+    capTier: tierCapForBudget(remainingUsd),
   };
 }
 

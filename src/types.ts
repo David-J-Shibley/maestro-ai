@@ -104,6 +104,11 @@ export interface RoutingConfig {
    * - on: merge LLM fields into analysis (fail-soft vs premium)
    */
   llmClassify?: "off" | "shadow" | "on";
+  /**
+   * When true (default), detect offline (no internet or cloud tiers down)
+   * and force routing to local_strong max. Set false to disable.
+   */
+  offlineLocalOnly?: boolean;
 }
 
 export interface TelemetryConfig {
@@ -326,7 +331,10 @@ export interface TelemetryRecord {
   fallbackModel?: string;
   latencyMs: number;
   tokenUsage?: LLMUsage;
+  /** Cost of the final serving attempt (legacy field; prefer totalEstimatedCostUsd). */
   estimatedCostUsd?: number;
+  /** Sum of estimated cost across all attempts (retries + escalations). */
+  totalEstimatedCostUsd?: number;
   success: boolean;
   evaluatorResult?: EvaluationResult;
   routingReason: string;
@@ -339,6 +347,10 @@ export interface TelemetryRecord {
   mode?: RoutingMode;
   sessionId?: string;
   userFeedback?: string;
+  /** Structured 1–5 rating from maestro_feedback (v1.7+) */
+  userRating?: number;
+  /** Whether the user/agent accepted the result (v1.7+) */
+  userAccepted?: boolean;
   /** Proxy / plain-reply outcome for feedback loop */
   outcome?: "ok" | "plain_coerced" | "plain_retry_ok" | "plain_fallback";
   /** Difficulty / tool-need dimensions for richer learned cells */
@@ -367,6 +379,8 @@ export interface RoutedAttempt {
   error?: string;
   evaluation?: EvaluationResult;
   action?: AttemptAction;
+  usage?: LLMUsage;
+  estimatedCostUsd?: number;
 }
 
 export interface AttemptLogEntry {

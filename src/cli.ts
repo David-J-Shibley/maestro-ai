@@ -7,6 +7,8 @@ import { loadConfig } from "./config/load-config.js";
 import { computeTelemetryStats, formatStatsReport, loadAllTelemetryRecords, loadTelemetryRecords } from "./telemetry/stats.js";
 import { computeRoutingInsights, formatInsightsReport } from "./telemetry/analysis.js";
 import { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
+import { buildEvaluatorHooks } from "./evaluator/shell-hooks.js";
+import { recordStructuredFeedback } from "./telemetry/logger.js";
 import type { WorkflowRequest } from "./workflow/types.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
@@ -192,12 +194,54 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "feedback") {
+      const telemetryId =
+        typeof flags["telemetry-id"] === "string"
+          ? flags["telemetry-id"]
+          : positional[0];
+      if (!telemetryId) {
+        throw new Error("Usage: maestro feedback <telemetry-id> [--rating N] [--accepted] [--note text]");
+      }
+      const rating =
+        typeof flags.rating === "string" ? parseInt(flags.rating, 10) : undefined;
+      const accepted =
+        flags.accepted === true || flags.accepted === "true"
+          ? true
+          : flags.accepted === "false"
+            ? false
+            : undefined;
+      const note =
+        typeof flags.note === "string"
+          ? flags.note
+          : typeof flags.feedback === "string"
+            ? flags.feedback
+            : positional.slice(1).join(" ") || undefined;
+      const config = loadConfig(typeof flags.config === "string" ? flags.config : undefined);
+      const id = recordStructuredFeedback(config, {
+        telemetryId,
+        feedback: note,
+        rating,
+        accepted,
+        sessionId: typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
+      });
+      if (json) {
+        console.log(JSON.stringify({ ok: true, feedback_id: id, telemetry_id: telemetryId, rating, accepted }, null, 2));
+      } else {
+        console.log(`Recorded feedback ${id} for ${telemetryId}`);
+      }
+      return;
+    }
+
     if (command === "call" || command === "ask") {
       const messages = readMessages(flags, positional);
       const configPath = typeof flags.config === "string" ? flags.config : undefined;
+      const evaluatorContext = buildEvaluatorHooks({
+        runTests: typeof flags["run-tests"] === "string" ? flags["run-tests"] : undefined,
+        runBuild: typeof flags["run-build"] === "string" ? flags["run-build"] : undefined,
+      });
+      const hasHooks = Boolean(evaluatorContext.runTests || evaluatorContext.runBuild);
 
       if (overrides.dryRunWorkflow || overrides.workflow) {
-        const config = loadConfig(configPath);
         if (overrides.dryRunWorkflow) {
           const dry = await dryRunWorkflow(
             {
@@ -225,7 +269,10 @@ async function main(): Promise<void> {
             overrides,
             workflow: overrides.workflow ?? "auto",
           },
-          { configPath }
+          {
+            configPath,
+            evaluatorContext: hasHooks ? evaluatorContext : undefined,
+          }
         );
 
         if (json) {
@@ -247,7 +294,10 @@ async function main(): Promise<void> {
           taskHints: parseTaskHints(flags),
           overrides,
         },
-        { configPath: typeof flags.config === "string" ? flags.config : undefined }
+        {
+          configPath: typeof flags.config === "string" ? flags.config : undefined,
+          evaluatorContext: hasHooks ? evaluatorContext : undefined,
+        }
       );
 
       if (json) {
@@ -463,6 +513,7 @@ Usage:
   maestro stats [--last N]            Telemetry summary (default 50)
   maestro analyze [--all]             Telemetry routing insights & recommendations
   maestro insights                    Alias for analyze
+  maestro feedback <telemetry-id>     Record rating/accepted feedback
   maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss]
   maestro version                     Print package version
 
@@ -493,6 +544,12 @@ Flags:
   --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
   --workflow <pattern>     Workflow orchestration (auto|critique|implement-test-fix|parallel-synthesis|...)
   --dry-run-workflow       Preview workflow plan without executing
+  --run-tests <cmd>        Shell command for tests_pass evaluator (exit 0 = pass)
+  --run-build <cmd>        Shell command for build_pass evaluator (exit 0 = pass)
+  --rating <1-5>           Structured feedback rating
+  --accepted / --accepted false   Whether result was accepted
+  --note <text>            Feedback note (with maestro feedback)
+  --telemetry-id <id>      Telemetry id for feedback (or positional)
   --port <n>               Proxy listen port (default 4100)
   --host <addr>            Proxy bind address (default 127.0.0.1)
   --profile <name>         Proxy harness profile (claude-code|cursor|openai)

@@ -8,7 +8,7 @@ import {
   applyModeToRuntime,
   resolveActiveMode,
 } from "../routing/modes.js";
-import { estimateCostUsd } from "../telemetry/logger.js";
+import { sumAttemptCosts } from "../telemetry/logger.js";
 import { routedLLMCall, type RoutedLLMCallOptions } from "../routed-llm-call.js";
 import type { RouterConfig } from "../types.js";
 import { dryRunWorkflowPlan, planWorkflow } from "./planner.js";
@@ -122,7 +122,11 @@ async function runSingleShot(
       analysis: result.analysis,
       evaluation: result.evaluation,
       latencyMs: result.response.latencyMs,
-      estimatedCostUsd: estimateCostUsd(result.routing.tier, result.response.usage) ?? 0,
+      estimatedCostUsd: sumAttemptCosts(
+        result.attempts,
+        result.routing.tier,
+        result.response.usage
+      ),
       escalated: result.escalated,
       retries: result.attempts.filter((a) => a.action === "retry").length,
       recommendedTier: step.recommendedTier,
