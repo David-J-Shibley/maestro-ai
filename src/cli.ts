@@ -9,6 +9,8 @@ import { computeRoutingInsights, formatInsightsReport } from "./telemetry/analys
 import { runWorkflow, dryRunWorkflow } from "./workflow/run-workflow.js";
 import { buildEvaluatorHooks } from "./evaluator/shell-hooks.js";
 import { recordStructuredFeedback } from "./telemetry/logger.js";
+import { formatProgressLine } from "./workflow/progress.js";
+import type { WorkflowProgressEvent } from "./workflow/progress.js";
 import type { WorkflowRequest } from "./workflow/types.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
@@ -261,6 +263,19 @@ async function main(): Promise<void> {
           return;
         }
 
+        const quietProgress = flags["quiet-progress"] === true;
+        const progressJson = flags["progress-json"] === true;
+        const onProgress =
+          quietProgress
+            ? undefined
+            : (event: WorkflowProgressEvent) => {
+                if (progressJson) {
+                  console.error(JSON.stringify(event));
+                } else {
+                  console.error(formatProgressLine(event));
+                }
+              };
+
         const result = await runWorkflow(
           {
             messages,
@@ -272,6 +287,7 @@ async function main(): Promise<void> {
           {
             configPath,
             evaluatorContext: hasHooks ? evaluatorContext : undefined,
+            onProgress,
           }
         );
 
@@ -544,6 +560,8 @@ Flags:
   --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
   --workflow <pattern>     Workflow orchestration (auto|critique|implement-test-fix|parallel-synthesis|...)
   --dry-run-workflow       Preview workflow plan without executing
+  --progress-json          Workflow progress as NDJSON on stderr
+  --quiet-progress         Suppress workflow progress lines
   --run-tests <cmd>        Shell command for tests_pass evaluator (exit 0 = pass)
   --run-build <cmd>        Shell command for build_pass evaluator (exit 0 = pass)
   --rating <1-5>           Structured feedback rating

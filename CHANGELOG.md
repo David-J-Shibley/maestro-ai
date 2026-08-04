@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-08-04
+
+### Added
+- **Workflow progress** — live step updates via `onProgress` callback on `runWorkflow` / `executeWorkflow`.
+- CLI: progress lines on **stderr** during `--workflow` runs; `--progress-json` for NDJSON; `--quiet-progress` to silence.
+- MCP `maestro_workflow` / workflow ask responses include a `progress` event array.
+- `formatProgressLine()` helper for human-readable progress.
+
+[1.8.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.8.0
+
 ## [1.7.0] - 2026-08-02
 
 ### Added

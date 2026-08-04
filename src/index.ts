@@ -159,6 +159,14 @@ export type {
 export { planWorkflow, selectWorkflowPattern } from "./workflow/planner.js";
 export { formatExecutionReport } from "./workflow/report.js";
 export { executionLevels } from "./workflow/dag.js";
+export {
+  formatProgressLine,
+  emitProgress,
+} from "./workflow/progress.js";
+export type {
+  WorkflowProgressEvent,
+  WorkflowProgressHandler,
+} from "./workflow/progress.js";
 
 export {
   estimateCostUsd,

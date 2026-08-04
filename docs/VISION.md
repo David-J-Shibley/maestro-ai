@@ -133,6 +133,14 @@ Telemetry becomes training data for routing nudges:
 
 Deterministic rules remain the floor; learned weights sit on top. Online bandits / weight training remain future work.
 
+### v1.8 — Workflow progress ✅
+
+Live step visibility for multi-step runs:
+
+- `onProgress` events: workflow_started → step_started/finished → workflow_finished
+- CLI stderr progress (stdout stays the answer / JSON)
+- MCP responses include a `progress` trail
+
 ### v1.7 — Verification hooks + cost/feedback truth ✅
 
 Close the “plausible but wrong” gap and make cost/feedback usable for learning:

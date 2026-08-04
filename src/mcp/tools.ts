@@ -13,6 +13,7 @@ import { learnedRoutingAvailable } from "../routing/learned.js";
 import { recordStructuredFeedback } from "../telemetry/logger.js";
 import { buildEvaluatorHooks } from "../evaluator/shell-hooks.js";
 import { dryRunWorkflow, runWorkflow } from "../workflow/run-workflow.js";
+import type { WorkflowProgressEvent } from "../workflow/progress.js";
 import type { ChatMessage, EvaluatorContext, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
 import type {
   AnalyzeToolInput,
@@ -220,6 +221,7 @@ export async function handleWorkflowTool(input: WorkflowToolInput) {
     };
   }
 
+  const progress: WorkflowProgressEvent[] = [];
   const result = await runWorkflow(
     {
       messages,
@@ -228,7 +230,13 @@ export async function handleWorkflowTool(input: WorkflowToolInput) {
       overrides,
       workflow,
     },
-    { config, evaluatorContext: buildAskEvaluatorContext(input) }
+    {
+      config,
+      evaluatorContext: buildAskEvaluatorContext(input),
+      onProgress: (event) => {
+        progress.push(event);
+      },
+    }
   );
 
   return {
@@ -242,6 +250,7 @@ export async function handleWorkflowTool(input: WorkflowToolInput) {
       tier: s.actualTier,
       model: s.model,
     })),
+    progress,
     validation: result.validation,
     report: input.debug ? result.report : { markdown: result.report.markdown, finalStatus: result.report.finalStatus },
     telemetry_id: result.telemetry.workflowId,

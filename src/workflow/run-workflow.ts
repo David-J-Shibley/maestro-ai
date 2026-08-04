@@ -13,6 +13,7 @@ import { routedLLMCall, type RoutedLLMCallOptions } from "../routed-llm-call.js"
 import type { RouterConfig } from "../types.js";
 import { dryRunWorkflowPlan, planWorkflow } from "./planner.js";
 import { executeWorkflow, type ExecuteWorkflowOptions } from "./executor.js";
+import { emitProgress } from "./progress.js";
 import { formatExecutionReport } from "./report.js";
 import { logWorkflowTelemetry, workflowPromptHash } from "./telemetry.js";
 import { validateWorkflowOutput } from "./validation.js";
@@ -81,6 +82,15 @@ export async function runWorkflow(
     userFeedback: effectiveInput.overrides?.userFeedback,
   });
 
+  emitProgress(options.onProgress, {
+    type: "workflow_finished",
+    workflowId,
+    finalStatus: report.finalStatus,
+    totalLatencyMs: report.totalLatencyMs,
+    estimatedCostUsd: report.estimatedCostUsd,
+    finalConfidence: report.finalConfidence,
+  });
+
   return {
     finalOutput,
     workflow: plan,
@@ -100,6 +110,29 @@ async function runSingleShot(
   options: RunWorkflowOptions,
   plan: import("./types.js").WorkflowPlan
 ): Promise<RunWorkflowResult> {
+  const onProgress = options.onProgress;
+  const step = plan.steps[0]!;
+
+  emitProgress(onProgress, {
+    type: "workflow_started",
+    workflowId: plan.id,
+    pattern: plan.pattern,
+    patternLabel: plan.patternLabel,
+    goal: plan.goal,
+    stepCount: 1,
+    steps: [{ id: step.id, name: step.name, dependsOn: step.dependsOn }],
+  });
+
+  emitProgress(onProgress, {
+    type: "step_started",
+    stepId: step.id,
+    name: step.name,
+    kind: step.kind,
+    index: 1,
+    total: 1,
+    recommendedTier: step.recommendedTier,
+  });
+
   const result = await routedLLMCall(
     {
       messages: input.messages,
@@ -111,7 +144,6 @@ async function runSingleShot(
     options
   );
 
-  const step = plan.steps[0]!;
   const steps: import("./types.js").WorkflowStepResult[] = [
     {
       stepId: step.id,
@@ -135,6 +167,20 @@ async function runSingleShot(
     },
   ];
 
+  emitProgress(onProgress, {
+    type: "step_finished",
+    stepId: step.id,
+    name: step.name,
+    status: steps[0]!.status as "passed" | "failed",
+    latencyMs: steps[0]!.latencyMs,
+    index: 1,
+    total: 1,
+    actualTier: steps[0]!.actualTier,
+    model: steps[0]!.model,
+    escalated: steps[0]!.escalated,
+    retries: steps[0]!.retries,
+  });
+
   const validation = validateWorkflowOutput(plan, input, steps, result.response.content);
   const report = formatExecutionReport(plan, steps, validation);
 
@@ -146,6 +192,15 @@ async function runSingleShot(
     promptHash: workflowPromptHash(userPrompt, extractSystemPrompt(input.messages)),
     sessionId: input.overrides?.session?.sessionId,
     userFeedback: input.overrides?.userFeedback,
+  });
+
+  emitProgress(onProgress, {
+    type: "workflow_finished",
+    workflowId,
+    finalStatus: report.finalStatus,
+    totalLatencyMs: report.totalLatencyMs,
+    estimatedCostUsd: report.estimatedCostUsd,
+    finalConfidence: report.finalConfidence,
   });
 
   return {

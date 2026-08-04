@@ -219,8 +219,10 @@ Maestro chooses an **execution strategy**, not just a model:
 ```bash
 maestro ask "build auth middleware" --workflow implement-test-fix \
   --run-tests "npm test" --run-build "npm run build" --debug
+# stderr: [maestro] 1/6 Planner → running … → passed
 maestro ask "compare these approaches" --workflow parallel-synthesis
 maestro ask "review this RFC" --workflow critique --dry-run-workflow
+maestro ask "..." --workflow auto --progress-json   # NDJSON on stderr
 
 # After a call, feed structured feedback into learned routing:
 maestro feedback <telemetry-id> --rating 4 --accepted --note "good enough"

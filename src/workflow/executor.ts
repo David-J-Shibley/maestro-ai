@@ -3,6 +3,8 @@ import { sumAttemptCosts } from "../telemetry/logger.js";
 import { routedLLMCall, type RoutedLLMCallOptions } from "../routed-llm-call.js";
 import type { EvaluatorContext, RouterConfig } from "../types.js";
 import { executionLevels, shouldSkipStep } from "./dag.js";
+import { emitProgress } from "./progress.js";
+import type { WorkflowProgressHandler } from "./progress.js";
 import { buildStepMessages, getFinalOutput } from "./prompts.js";
 import type {
   RunWorkflowInput,
@@ -17,6 +19,7 @@ import type {
 export interface ExecuteWorkflowOptions extends RoutedLLMCallOptions {
   stepRunner?: StepRunner;
   evaluatorContext?: EvaluatorContext;
+  onProgress?: WorkflowProgressHandler;
 }
 
 const defaultStepRunner: StepRunner = async (ctx, options) => {
@@ -44,6 +47,7 @@ export async function executeWorkflow(
   state: WorkflowStateSnapshot;
 }> {
   const runner = options.stepRunner ?? defaultStepRunner;
+  const onProgress = options.onProgress;
   const levels = executionLevels(plan.steps);
   const state: WorkflowStateSnapshot = {
     goal: plan.goal,
@@ -52,6 +56,22 @@ export async function executeWorkflow(
   };
   const stepResults = new Map<string, StepOutput>();
   const artifacts: Record<string, import("./types.js").WorkflowArtifact> = {};
+  const stepIndex = new Map(plan.steps.map((s, i) => [s.id, i + 1]));
+  const total = plan.steps.length;
+
+  emitProgress(onProgress, {
+    type: "workflow_started",
+    workflowId: plan.id,
+    pattern: plan.pattern,
+    patternLabel: plan.patternLabel,
+    goal: plan.goal,
+    stepCount: total,
+    steps: plan.steps.map((s) => ({
+      id: s.id,
+      name: s.name,
+      dependsOn: s.dependsOn,
+    })),
+  });
 
   const baseOptions: RoutedLLMCallOptions = {
     config,
@@ -65,6 +85,16 @@ export async function executeWorkflow(
 
     for (const step of level) {
       if (shouldSkipStep(step, stepResults)) {
+        const index = stepIndex.get(step.id) ?? 0;
+        emitProgress(onProgress, {
+          type: "step_started",
+          stepId: step.id,
+          name: step.name,
+          kind: step.kind,
+          index,
+          total,
+          recommendedTier: step.recommendedTier,
+        });
         const skipped: StepOutput = {
           stepId: step.id,
           content: "",
@@ -76,6 +106,17 @@ export async function executeWorkflow(
         };
         stepResults.set(step.id, skipped);
         state.stepOutputs.set(step.id, { content: "", status: "skipped" });
+        emitProgress(onProgress, {
+          type: "step_finished",
+          stepId: step.id,
+          name: step.name,
+          status: "skipped",
+          latencyMs: 0,
+          index,
+          total,
+          actualTier: step.recommendedTier,
+          model: "n/a",
+        });
         continue;
       }
       toRun.push(step);
@@ -85,13 +126,37 @@ export async function executeWorkflow(
     const sequential = toRun.filter((s) => !s.parallelizable);
 
     for (const step of sequential) {
-      await runOneStep(step, input, state, stepResults, artifacts, runner, baseOptions, options.evaluatorContext);
+      await runOneStep(
+        step,
+        input,
+        state,
+        stepResults,
+        artifacts,
+        runner,
+        baseOptions,
+        options.evaluatorContext,
+        onProgress,
+        stepIndex.get(step.id) ?? 0,
+        total
+      );
     }
 
     if (parallel.length > 0) {
       await Promise.all(
         parallel.map((step) =>
-          runOneStep(step, input, state, stepResults, artifacts, runner, baseOptions, options.evaluatorContext)
+          runOneStep(
+            step,
+            input,
+            state,
+            stepResults,
+            artifacts,
+            runner,
+            baseOptions,
+            options.evaluatorContext,
+            onProgress,
+            stepIndex.get(step.id) ?? 0,
+            total
+          )
         )
       );
     }
@@ -114,16 +179,53 @@ async function runOneStep(
   artifacts: Record<string, import("./types.js").WorkflowArtifact>,
   runner: StepRunner,
   baseOptions: RoutedLLMCallOptions,
-  evaluatorContext?: EvaluatorContext
+  evaluatorContext: EvaluatorContext | undefined,
+  onProgress: WorkflowProgressHandler | undefined,
+  index: number,
+  total: number
 ): Promise<void> {
   const started = Date.now();
+
+  emitProgress(onProgress, {
+    type: "step_started",
+    stepId: step.id,
+    name: step.name,
+    kind: step.kind,
+    index,
+    total,
+    recommendedTier: step.recommendedTier,
+  });
+
+  const finish = (output: StepOutput) => {
+    stepResults.set(step.id, output);
+    state.stepOutputs.set(step.id, { content: output.content, status: output.status });
+    emitProgress(onProgress, {
+      type: "step_finished",
+      stepId: step.id,
+      name: step.name,
+      status:
+        output.status === "passed" ||
+        output.status === "failed" ||
+        output.status === "skipped"
+          ? output.status
+          : "failed",
+      latencyMs: output.latencyMs,
+      index,
+      total,
+      actualTier: output.routing?.tier ?? step.recommendedTier,
+      model: output.routing?.model ?? (step.kind === "tool" ? "tool-execution" : "n/a"),
+      escalated: output.escalated,
+      retries: output.retries,
+      error: output.error,
+    });
+  };
 
   if (step.kind === "tool") {
     const needsTests = step.validation.runTests && evaluatorContext?.runTests;
     const needsBuild = step.validation.runBuild && evaluatorContext?.runBuild;
 
     if (!needsTests && !needsBuild) {
-      const skipped: StepOutput = {
+      finish({
         stepId: step.id,
         content: "Tool validation skipped — no test/build runners provided",
         status: "skipped",
@@ -131,9 +233,7 @@ async function runOneStep(
         estimatedCostUsd: 0,
         escalated: false,
         retries: 0,
-      };
-      stepResults.set(step.id, skipped);
-      state.stepOutputs.set(step.id, { content: skipped.content, status: "skipped" });
+      });
       return;
     }
     const evalCtx: EvaluatorContext = {
@@ -147,7 +247,7 @@ async function runOneStep(
         ? await evaluateResponseAsync("", evalCtx)
         : evaluateResponse("", evalCtx);
 
-    const output: StepOutput = {
+    finish({
       stepId: step.id,
       content: evaluation.pass ? "Tool validation passed" : evaluation.reason,
       status: evaluation.pass ? "passed" : "failed",
@@ -156,9 +256,7 @@ async function runOneStep(
       estimatedCostUsd: 0,
       escalated: false,
       retries: 0,
-    };
-    stepResults.set(step.id, output);
-    state.stepOutputs.set(step.id, { content: output.content, status: output.status });
+    });
     return;
   }
 
@@ -189,7 +287,7 @@ async function runOneStep(
       baseOptions
     );
   } catch (err) {
-    const output: StepOutput = {
+    finish({
       stepId: step.id,
       content: "",
       status: "failed",
@@ -198,9 +296,7 @@ async function runOneStep(
       escalated: false,
       retries: 0,
       error: err instanceof Error ? err.message : String(err),
-    };
-    stepResults.set(step.id, output);
-    state.stepOutputs.set(step.id, { content: "", status: "failed" });
+    });
     return;
   }
 
@@ -227,8 +323,7 @@ async function runOneStep(
     retries,
   };
 
-  stepResults.set(step.id, output);
-  state.stepOutputs.set(step.id, { content: output.content, status: output.status });
+  finish(output);
 
   artifacts[step.id] = {
     stepId: step.id,
