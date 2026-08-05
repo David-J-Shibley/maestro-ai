@@ -26,20 +26,64 @@ export function setStickyTier(sessionId: string | undefined, tier: ModelTier): v
   store.set(sessionId, { lastTier: tier, lastAt: Date.now() });
 }
 
-/** Prefer sticky local tier for easy / tools-omittable turns. */
+export interface StickyPreferenceOpts {
+  requiresToolUse: boolean;
+  difficulty: string;
+  riskLevel: string;
+  taskType?: string;
+  /**
+   * When true (default), avoid soft cloud→cloud downgrades within a session
+   * so provider prefix caches stay warm.
+   */
+  cacheAwareSticky?: boolean;
+}
+
+/**
+ * Prefer sticky local for easy / tools-omittable turns.
+ * Optionally keep the last cloud tier when the new route would only soft-downgrade
+ * between hosted_oss and premium (cache-aware stickiness).
+ */
 export function applyStickyTierPreference(
   tier: ModelTier,
   sticky: ModelTier | undefined,
-  opts: { requiresToolUse: boolean; difficulty: string; riskLevel: string }
-): { tier: ModelTier; applied: boolean } {
+  opts: StickyPreferenceOpts
+): { tier: ModelTier; applied: boolean; kind?: "local" | "cache" } {
   if (!sticky) return { tier, applied: false };
-  if (opts.requiresToolUse) return { tier, applied: false };
-  if (opts.difficulty !== "easy" || opts.riskLevel !== "low") {
+
+  // Local sticky — pin easy / low-risk / tools-omittable turns to last local tier.
+  if (
+    isLocalTier(sticky) &&
+    !opts.requiresToolUse &&
+    opts.difficulty === "easy" &&
+    opts.riskLevel === "low"
+  ) {
+    return { tier: sticky, applied: sticky !== tier, kind: "local" };
+  }
+
+  const cacheAware = opts.cacheAwareSticky !== false;
+  if (!cacheAware || isLocalTier(sticky)) {
     return { tier, applied: false };
   }
-  // Only stick to local tiers — don't pin on premium from a prior hard turn.
-  if (!isLocalTier(sticky)) return { tier, applied: false };
-  return { tier: sticky, applied: sticky !== tier };
+
+  // Cloud sticky (cache-aware): upgrades always win; leave for intentional local;
+  // soft cloud→cloud downgrades stay on sticky to preserve prefix cache.
+  const stickyIdx = tierIndex(sticky);
+  const proposedIdx = tierIndex(tier);
+  if (proposedIdx < 0 || stickyIdx < 0) return { tier, applied: false };
+  if (proposedIdx >= stickyIdx) return { tier, applied: false };
+
+  // Allow leaving cloud for local (cost / privacy / offline) — no shared cache anyway.
+  if (isLocalTier(tier)) {
+    return { tier, applied: false };
+  }
+
+  // Soft cloud→cloud downgrade (e.g. premium → hosted_oss): keep sticky.
+  return { tier: sticky, applied: sticky !== tier, kind: "cache" };
+}
+
+function tierIndex(tier: ModelTier): number {
+  const order: ModelTier[] = ["local_fast", "local_strong", "hosted_oss", "premium"];
+  return order.indexOf(tier);
 }
 
 export function clearStickyStore(): void {

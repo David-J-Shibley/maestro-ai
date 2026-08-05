@@ -49,6 +49,7 @@ import type {
   TaskAnalysis,
 } from "./types.js";
 import { nextTier } from "./types.js";
+import { setStickyTier } from "./proxy/session-sticky.js";
 
 export interface RoutedLLMCallOptions {
   config?: RouterConfig;
@@ -392,6 +393,10 @@ export async function routedLLMCall(
     requiresToolUse: analysis.requiresToolUse,
     outcome: "ok",
   });
+
+  if (sessionId && sessionId !== "anonymous") {
+    setStickyTier(sessionId, currentTier);
+  }
 
   return {
     response: lastResponse,

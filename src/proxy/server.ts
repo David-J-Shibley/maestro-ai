@@ -775,6 +775,7 @@ async function streamRoutedAnthropic(opts: {
       routedModel: routing.model,
       routedTier: routing.tier,
     });
+    setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
     return;
   }
 
@@ -841,6 +842,7 @@ async function streamRoutedAnthropic(opts: {
 
   if (!canWrite(res)) return;
   const { stopReason } = emitter.finish();
+  setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${emitter.textLength}ch ` +
@@ -1395,6 +1397,7 @@ async function streamRoutedOpenAi(opts: {
     if (verbose) {
       log(`ok ${Date.now() - started}ms openai-stream routed=${routing.model}`);
     }
+    setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
   } catch (err) {
     stopHeartbeat();
     throw err;
@@ -1893,6 +1896,8 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             );
           }
 
+          setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+
           endJsonKeepalive(res, {
             id: provisionalId,
             type: "message",
@@ -2078,6 +2083,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             : undefined,
           maestro: maestroMeta,
         });
+        setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
       } catch (err) {
         log("chat error:", err instanceof Error ? err.stack ?? err.message : err);
         if (!res.headersSent) {

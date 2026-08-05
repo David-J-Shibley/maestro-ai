@@ -31,6 +31,7 @@ import {
   shouldApplyLearnedHint,
   suggestTierFromTelemetry,
 } from "../routing/learned.js";
+import { applyWorkloadRole } from "../routing/workload.js";
 
 export interface RouteInput {
   analysis: TaskAnalysis;
@@ -156,20 +157,6 @@ export function routeTask(input: RouteInput): RoutingDecision {
     reasons.push("preferLocal bumped easy low-risk task to local_strong");
   }
 
-  const sticky = session?.stickyTier;
-  if (sticky) {
-    const stickyResult = applyStickyTierPreference(tier, sticky, {
-      requiresToolUse: analysis.requiresToolUse,
-      difficulty: analysis.difficulty,
-      riskLevel: analysis.riskLevel,
-    });
-    if (stickyResult.applied) {
-      tier = stickyResult.tier;
-      reasons.push(`session stickyTier → ${tier}`);
-      pushDebug(debug, `sticky: preferred ${tier}`);
-    }
-  }
-
   const policyApplied = applyRoutingPolicy(
     tier,
     analysis,
@@ -182,6 +169,34 @@ export function routeTask(input: RouteInput): RoutingDecision {
   for (const note of policyApplied.notes) {
     pushDebug(debug, `policy: ${note}`);
     reasons.push(note);
+  }
+
+  // Workload + sticky after policy so explicit roles / cache stickiness beat soft task-type caps.
+  const workloadApplied = applyWorkloadRole(tier, taskHints?.workload, analysis);
+  if (workloadApplied.tier !== tier || workloadApplied.notes.length) {
+    tier = workloadApplied.tier;
+    for (const note of workloadApplied.notes) {
+      reasons.push(note);
+      pushDebug(debug, note);
+    }
+  }
+
+  const sticky = session?.stickyTier;
+  if (sticky) {
+    const stickyResult = applyStickyTierPreference(tier, sticky, {
+      requiresToolUse: analysis.requiresToolUse,
+      difficulty: analysis.difficulty,
+      riskLevel: analysis.riskLevel,
+      taskType: analysis.taskType,
+      cacheAwareSticky: config.routing.cacheAwareSticky,
+    });
+    if (stickyResult.applied) {
+      tier = stickyResult.tier;
+      const kind =
+        stickyResult.kind === "cache" ? "cache-aware sticky tier" : "session sticky tier";
+      reasons.push(`${kind} → ${tier}`);
+      pushDebug(debug, `sticky: preferred ${tier} (${stickyResult.kind ?? "local"})`);
+    }
   }
 
   if (session?.maxTier) {

@@ -141,6 +141,14 @@ Live step visibility for multi-step runs:
 - CLI stderr progress (stdout stays the answer / JSON)
 - MCP responses include a `progress` trail
 
+### v1.9 — Cache-aware sticky + workload roles ✅
+
+Respond to “naive per-prompt routers thrash cache / ignore workload” critiques:
+
+- **Workload roles** (`orchestrator`, `research`, `coder`, `formatter`, `critic`, `extractor`) set explicit floors/caps
+- **Cache-aware sticky** keeps soft cloud→cloud downgrades on the warm tier within a session (default on)
+- Sticky updates after successful proxy / routed calls; CLI/MCP honor `session_id` sticky
+
 ### v1.7 — Verification hooks + cost/feedback truth ✅
 
 Close the “plausible but wrong” gap and make cost/feedback usable for learning:

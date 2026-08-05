@@ -15,10 +15,12 @@ import type { WorkflowRequest } from "./workflow/types.js";
 import { runDoctor } from "./doctor/health.js";
 import { runInit, formatInitReport } from "./init/setup.js";
 import { startProxyServer } from "./proxy/server.js";
+import { getStickyTier } from "./proxy/session-sticky.js";
 import type { ChatMessage, ModelTier, RouterOverrides } from "./types.js";
 import { TIER_ORDER } from "./types.js";
 import { formatProbeSummary } from "./routing/probe-summary.js";
 import { isRoutingMode } from "./routing/modes.js";
+import { isWorkloadRole } from "./routing/workload.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 function parseArgs(argv: string[]): {
@@ -57,15 +59,16 @@ function parseArgs(argv: string[]): {
 }
 
 function buildOverrides(flags: Record<string, string | boolean>): RouterOverrides {
+  const sessionId =
+    typeof flags["session-id"] === "string" ? flags["session-id"] : undefined;
   const session =
-    typeof flags["session-id"] === "string" ||
+    sessionId ||
     typeof flags["budget-usd"] === "string" ||
     typeof flags["max-tier"] === "string" ||
     flags["always-prefer-local"] === true ||
     flags["always-prefer-local"] === "true"
       ? {
-          sessionId:
-            typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
+          sessionId,
           budgetUsd:
             typeof flags["budget-usd"] === "string"
               ? parseFloat(flags["budget-usd"])
@@ -77,6 +80,7 @@ function buildOverrides(flags: Record<string, string | boolean>): RouterOverride
           alwaysPreferLocal:
             flags["always-prefer-local"] === true ||
             flags["always-prefer-local"] === "true",
+          stickyTier: getStickyTier(sessionId),
         }
       : undefined;
 
@@ -453,11 +457,20 @@ async function main(): Promise<void> {
 }
 
 function parseTaskHints(flags: Record<string, string | boolean>) {
-  if (typeof flags["task-type"] !== "string") return undefined;
+  const hasType = typeof flags["task-type"] === "string";
+  const hasQuality = typeof flags.quality === "string";
+  const hasRisk = typeof flags.risk === "string";
+  const workloadRaw = typeof flags.workload === "string" ? flags.workload : undefined;
+  const workload =
+    workloadRaw && isWorkloadRole(workloadRaw) ? workloadRaw : undefined;
+  if (!hasType && !hasQuality && !hasRisk && !workload) return undefined;
   return {
-    type: flags["task-type"] as import("./types.js").TaskType,
-    quality: typeof flags.quality === "string" ? (flags.quality as import("./types.js").QualityPreference) : undefined,
-    risk: typeof flags.risk === "string" ? (flags.risk as import("./types.js").RiskLevel) : undefined,
+    type: hasType ? (flags["task-type"] as import("./types.js").TaskType) : undefined,
+    quality: hasQuality
+      ? (flags.quality as import("./types.js").QualityPreference)
+      : undefined,
+    risk: hasRisk ? (flags.risk as import("./types.js").RiskLevel) : undefined,
+    workload,
   };
 }
 
@@ -557,6 +570,7 @@ Flags:
   --file <path>            JSON file with { messages: [...] }
   --messages <json>        Inline messages JSON
   --task-type <type>       Task hint (code_edit, summarization, ...)
+  --workload <role>        Workload role (orchestrator|research|coder|formatter|critic|extractor)
   --mode <mode>            Routing mode (balanced|local-only|cheapest|fastest|best-quality|private)
   --workflow <pattern>     Workflow orchestration (auto|critique|implement-test-fix|parallel-synthesis|...)
   --dry-run-workflow       Preview workflow plan without executing

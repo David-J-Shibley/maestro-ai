@@ -18,6 +18,14 @@ export const taskTypeSchema = z.enum([
 
 export const qualitySchema = z.enum(["fast", "balanced", "best"]);
 export const riskSchema = z.enum(["low", "medium", "high"]);
+export const workloadSchema = z.enum([
+  "orchestrator",
+  "research",
+  "coder",
+  "formatter",
+  "critic",
+  "extractor",
+]);
 export const tierSchema = z.enum(["local_fast", "local_strong", "hosted_oss", "premium"]);
 export const modeSchema = z.enum([
   "balanced",
@@ -41,6 +49,11 @@ export const routeToolInputSchema = z.object({
     .describe("Optional system prompt to include in analysis."),
   task_type: taskTypeSchema.optional().describe("Optional task type hint."),
   quality: qualitySchema.optional().describe("Quality preference: fast, balanced, or best."),
+  workload: workloadSchema
+    .optional()
+    .describe(
+      "Workload/role hint: orchestrator, research, coder, formatter, critic, or extractor. Biases tier floors/caps for multi-agent sessions."
+    ),
   mode: modeSchema
     .optional()
     .describe(

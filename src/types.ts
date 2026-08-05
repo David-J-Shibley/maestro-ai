@@ -19,6 +19,15 @@ export type TaskType =
 
 export type QualityPreference = "fast" | "balanced" | "best";
 
+/** Explicit agent/workload role — biases floor/cap beyond per-prompt heuristics (v1.9+). */
+export type WorkloadRole =
+  | "orchestrator"
+  | "research"
+  | "coder"
+  | "formatter"
+  | "critic"
+  | "extractor";
+
 export type RoutingMode =
   | "balanced"
   | "local-only"
@@ -31,6 +40,8 @@ export interface TaskHints {
   type?: TaskType;
   quality?: QualityPreference;
   risk?: RiskLevel;
+  /** Workload/role hint for multi-agent or long sessions (orchestrator, coder, …). */
+  workload?: WorkloadRole;
   requiresTools?: boolean;
   requiresCodeReasoning?: boolean;
   requiresLongContext?: boolean;
@@ -109,6 +120,12 @@ export interface RoutingConfig {
    * and force routing to local_strong max. Set false to disable.
    */
   offlineLocalOnly?: boolean;
+  /**
+   * When true (default), within a session prefer staying on the last cloud tier
+   * instead of soft-downgrading hosted_oss ↔ premium (preserves provider prefix cache).
+   * Easy local turns can still leave cloud. Set false to disable.
+   */
+  cacheAwareSticky?: boolean;
 }
 
 export interface TelemetryConfig {
@@ -127,7 +144,10 @@ export interface SessionPolicy {
   maxTier?: ModelTier;
   budgetUsd?: number;
   alwaysPreferLocal?: boolean;
-  /** Prefer this tier for easy / tools-omittable turns (proxy sticky routing). */
+  /**
+   * Prefer this tier for easy / tools-omittable turns, and (when cacheAwareSticky)
+   * soft cloud→cloud downgrades within the session.
+   */
   stickyTier?: ModelTier;
 }
 

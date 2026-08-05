@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-08-04
+
+### Added
+- **Workload / role hints** — `workload` on task hints (`orchestrator` | `research` | `coder` | `formatter` | `critic` | `extractor`) with tier floors/caps for multi-agent sessions. CLI `--workload`, MCP `workload`.
+- **Cache-aware session stickiness** — within a `session_id`, soft cloud→cloud downgrades (`premium` → `hosted_oss`) stay on the last cloud tier so provider prefix caches stay warm. Easy local turns can still leave cloud. Config: `routing.cacheAwareSticky` (default `true`).
+- Sticky tier is now recorded after successful proxy streams / `routedLLMCall` (not only plain-reply), and CLI/MCP pass `stickyTier` when `session_id` is set.
+
+[1.9.0]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.9.0
+
 ## [1.8.0] - 2026-08-04
 
 ### Added

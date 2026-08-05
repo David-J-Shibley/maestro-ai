@@ -15,6 +15,7 @@ import { buildEvaluatorHooks } from "../evaluator/shell-hooks.js";
 import { dryRunWorkflow, runWorkflow } from "../workflow/run-workflow.js";
 import type { WorkflowProgressEvent } from "../workflow/progress.js";
 import type { ChatMessage, EvaluatorContext, RouterOverrides, SessionPolicy, TaskHints } from "../types.js";
+import { getStickyTier } from "../proxy/session-sticky.js";
 import type {
   AnalyzeToolInput,
   AskToolInput,
@@ -35,11 +36,12 @@ export function buildMessages(prompt: string, systemPrompt?: string): ChatMessag
 }
 
 export function buildTaskHints(input: RouteToolInput): TaskHints | undefined {
-  if (!input.task_type && !input.quality && !input.risk) return undefined;
+  if (!input.task_type && !input.quality && !input.risk && !input.workload) return undefined;
   return {
     type: input.task_type,
     quality: input.quality,
     risk: input.risk,
+    workload: input.workload,
   };
 }
 
@@ -57,6 +59,7 @@ export function buildSessionPolicy(input: RouteToolInput): SessionPolicy | undef
     budgetUsd: input.budget_usd,
     alwaysPreferLocal: input.always_prefer_local,
     sessionId: input.session_id,
+    stickyTier: getStickyTier(input.session_id),
   };
 }
 

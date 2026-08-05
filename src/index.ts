@@ -33,6 +33,7 @@ export type {
   TelemetryConfig,
   TelemetryRecord,
   TierModelConfig,
+  WorkloadRole,
 } from "./types.js";
 
 export { TIER_ORDER, capTier, floorTier, isLocalTier, nextTier } from "./types.js";
@@ -126,6 +127,18 @@ export {
   resolveModeConstraints,
 } from "./routing/modes.js";
 export type { ModeConstraints, ModeProfile } from "./routing/modes.js";
+export {
+  WORKLOAD_ROLES,
+  applyWorkloadRole,
+  isWorkloadRole,
+} from "./routing/workload.js";
+export {
+  applyStickyTierPreference,
+  clearStickyStore,
+  getStickyTier,
+  setStickyTier,
+} from "./proxy/session-sticky.js";
+export type { StickyPreferenceOpts } from "./proxy/session-sticky.js";
 export {
   applyGuardrails,
   formatGuardrailsMarkdown,
