@@ -44,6 +44,7 @@ describe("llmClassify", () => {
     expect(
       shouldRunLlmClassify(base({ toolNeedScore: 0.9, confidence: 0.8 }), "shadow")
     ).toBe(false);
+    expect(shouldRunLlmClassify(base(), "shadow", "hi")).toBe(false);
   });
 
   it("shadow keeps heuristic route but records disagreement", () => {

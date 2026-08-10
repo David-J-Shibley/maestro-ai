@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.9.0** adds workload/role hints (`--workload`) and cache-aware session stickiness (soft cloud→cloud downgrades stay on the warm tier). **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
+**v1.9.1** hardens the Claude Code proxy: smart tool-catalog omission, instant chitchat bypass, agentic “do it” tool forwarding, and tool-specific status labels (not generic “Working on it…”). **v1.9.0** adds workload/role hints (`--workload`) and cache-aware session stickiness. **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
 
 ## Quick start (new machine)
 
@@ -24,6 +24,8 @@ maestro route "summarize this README" --debug
 **Cloud only?** `maestro init --profile cloud-only` — LiteLLM + API keys, no Ollama.
 
 Full setup guide: [docs/SETUP.md](docs/SETUP.md)
+
+**Demo / “why Maestro?”** [docs/DEMO.md](docs/DEMO.md) · [docs/COMPARISON.md](docs/COMPARISON.md)
 
 Vision & roadmap: [docs/VISION.md](docs/VISION.md)
 
@@ -80,6 +82,9 @@ See [docs/ARTICLE.md](docs/ARTICLE.md) for npm vs git clone, MCP setup, and prog
 
 Browser-based capability demos live under [`examples/`](./examples):
 
+- [`docs/DEMO.md`](./docs/DEMO.md) — **start here** for CLI + Claude Code proxy demo scripts
+- [`docs/COMPARISON.md`](./docs/COMPARISON.md) — Maestro vs LiteLLM / static agent routing
+- [`examples/run-routing-demo.sh`](./examples/run-routing-demo.sh) — dry-run routing demo (no backends)
 - [`examples/demo.html`](./examples/demo.html) — Claude Code capabilities overview
 - [`examples/claude-code-demo.html`](./examples/claude-code-demo.html) — interactive Claude Code demo
 - [`examples/delegate-subtask.sh`](./examples/delegate-subtask.sh) — shell hook delegating a subtask to Maestro

@@ -222,6 +222,13 @@ describe("maestro proxy", () => {
     expect(completion.choices[0].message.content).toBe("hello from maestro");
     expect(completion.maestro.routed_model).toBe("glm");
     expect(chatCompletionWithTools).toHaveBeenCalled();
+
+    const statusAfter = await fetch(`http://127.0.0.1:${port}/status`).then((r) =>
+      r.json()
+    );
+    expect(statusAfter.recentRoutes.length).toBeGreaterThan(0);
+    expect(statusAfter.recentRoutes.at(-1)?.tier).toBe("local_strong");
+    expect(statusAfter.recentRoutes.at(-1)?.ask).toBe("hi");
   });
 
   it("streams Anthropic deltas live (not one buffered dump)", async () => {
@@ -238,7 +245,12 @@ describe("maestro proxy", () => {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 64,
-        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "debug this intermittent 500 error" }],
+          },
+        ],
         stream: true,
       }),
     });
@@ -250,6 +262,36 @@ describe("maestro proxy", () => {
     expect(sse).toContain("event: message_stop");
     expect(dryRunRoute).toHaveBeenCalled();
     expect(anthropicMessagesStream).toHaveBeenCalled();
+  });
+
+  it("instant chitchat bypasses upstream for hi", async () => {
+    const proxy = createProxyServer({ port: 0, host: "127.0.0.1" });
+    proxies.push(proxy);
+    const port = await listen(proxy);
+
+    const streamRes = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 64,
+        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        tools: [{ name: "Read", description: "read", input_schema: { type: "object" } }],
+        stream: true,
+      }),
+    });
+    expect(streamRes.status).toBe(200);
+    const sse = await streamRes.text();
+    expect(sse).toContain("Hello! How can I help you today?");
+    expect(sse).toContain("event: message_stop");
+    expect(dryRunRoute).not.toHaveBeenCalled();
+    expect(anthropicMessagesStream).not.toHaveBeenCalled();
+
+    const status = await fetch(`http://127.0.0.1:${port}/status`).then((r) => r.json());
+    expect(status.recentRoutes.at(-1)?.model).toBe("chitchat-instant");
   });
 
   it("passes Anthropic tools natively and streams tool_use SSE", async () => {
@@ -444,7 +486,7 @@ describe("maestro proxy", () => {
     const msg = await res.json();
     expect(msg.stop_reason).toBe("tool_use");
     expect(msg.content).toEqual([
-      { type: "text", text: "Working on it…" },
+      { type: "text", text: "Writing `a.txt`…" },
       {
         type: "tool_use",
         id: "call_write",
@@ -483,7 +525,7 @@ describe("maestro proxy", () => {
       body: JSON.stringify({
         model: "maestro",
         max_tokens: 64,
-        messages: [{ role: "user", content: "hi" }],
+        messages: [{ role: "user", content: "debug this intermittent 500 error" }],
         stream: false,
       }),
     });

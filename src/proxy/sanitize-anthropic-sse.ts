@@ -30,9 +30,10 @@ export type SanitizeAnthropicSseState = {
   sawMessageStart: boolean;
   lastStopKey: string | null;
   toolNames: string[];
+  /** Any user-visible output (model text or injected tool labels). */
   emittedVisible: boolean;
-  /** Prefixed a short "Working…" text before the first tool_use. */
-  injectedWorkingText: boolean;
+  /** Model produced visible text — skip injected tool labels. */
+  emittedModelText: boolean;
 };
 
 export function createSanitizeAnthropicSseState(): SanitizeAnthropicSseState {
@@ -43,7 +44,7 @@ export function createSanitizeAnthropicSseState(): SanitizeAnthropicSseState {
     lastStopKey: null,
     toolNames: [],
     emittedVisible: false,
-    injectedWorkingText: false,
+    emittedModelText: false,
   };
 }
 
@@ -101,12 +102,107 @@ export function scrubAnthropicMessages(
   });
 }
 
+function pickString(
+  input: Record<string, unknown>,
+  keys: string[]
+): string | undefined {
+  for (const k of keys) {
+    const v = input[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function asInputRecord(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+  return {};
+}
+
+function truncateDetail(text: string, max = 80): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+/** Visible status line before tool_use when the model emits no text (GLM/LiteLLM). */
+export function formatToolUseVisibleText(
+  name: string,
+  input?: unknown
+): string {
+  const tool = name.trim() || "tool";
+  const lower = tool.toLowerCase();
+  const inp = asInputRecord(input);
+
+  const path = pickString(inp, [
+    "path",
+    "file_path",
+    "filePath",
+    "filename",
+    "file",
+    "notebook_path",
+  ]);
+  const command = pickString(inp, ["command", "cmd"]);
+  const pattern = pickString(inp, ["pattern", "query", "regex", "glob_pattern"]);
+  const url = pickString(inp, ["url", "uri"]);
+  const description = pickString(inp, ["description", "prompt", "task"]);
+  const query = pickString(inp, ["search_term", "searchTerm", "q"]);
+
+  const detail = (s: string) => `\`${truncateDetail(s)}\``;
+
+  switch (lower) {
+    case "read":
+      return path ? `Reading ${detail(path)}…` : "Reading file…";
+    case "write":
+      return path ? `Writing ${detail(path)}…` : "Writing file…";
+    case "edit":
+    case "strreplace":
+    case "apply_patch":
+      return path ? `Editing ${detail(path)}…` : "Editing file…";
+    case "bash":
+    case "shell":
+    case "terminal":
+      return command ? `Running ${detail(command)}…` : "Running command…";
+    case "grep":
+      if (pattern && path) {
+        return `Searching for ${detail(pattern)} in ${detail(path)}…`;
+      }
+      if (pattern) return `Searching for ${detail(pattern)}…`;
+      return "Searching codebase…";
+    case "glob":
+    case "glob_file_search":
+      return pattern ? `Finding files matching ${detail(pattern)}…` : "Finding files…";
+    case "webfetch":
+    case "fetch":
+      return url ? `Fetching ${detail(url)}…` : "Fetching URL…";
+    case "task":
+      return description
+        ? `Running subtask: ${truncateDetail(description, 100)}…`
+        : "Running subtask…";
+    case "delete":
+      return path ? `Deleting ${detail(path)}…` : "Deleting file…";
+    case "list":
+    case "list_dir":
+    case "ls":
+      return path ? `Listing ${detail(path)}…` : "Listing directory…";
+    case "websearch":
+      return query ? `Searching web for ${detail(query)}…` : "Searching the web…";
+    default:
+      if (description) return `${tool}: ${truncateDetail(description, 100)}…`;
+      if (path) return `${tool} on ${detail(path)}…`;
+      if (command) return `${tool}: ${detail(command)}…`;
+      if (query) return `${tool}: ${detail(query)}…`;
+      return `Using ${tool}…`;
+  }
+}
+
 function workingTextEvents(
-  state: SanitizeAnthropicSseState
+  state: SanitizeAnthropicSseState,
+  text: string
 ): AnthropicSseEvent[] {
-  if (state.emittedVisible || state.injectedWorkingText) return [];
+  if (state.emittedModelText) return [];
   const idx = state.nextClientIndex++;
-  state.injectedWorkingText = true;
   state.emittedVisible = true;
   return [
     frame("content_block_start", {
@@ -117,7 +213,7 @@ function workingTextEvents(
     frame("content_block_delta", {
       type: "content_block_delta",
       index: idx,
-      delta: { type: "text_delta", text: "Working on it…" },
+      delta: { type: "text_delta", text },
     }),
     frame("content_block_stop", {
       type: "content_block_stop",
@@ -180,9 +276,14 @@ export function sanitizeAnthropicSseEvent(
     let contentBlock: Record<string, unknown> = block ? { ...block } : {};
 
     if (contentBlock.type === "tool_use") {
-      out.push(...workingTextEvents(state));
       const name =
         typeof contentBlock.name === "string" ? contentBlock.name : "";
+      out.push(
+        ...workingTextEvents(
+          state,
+          formatToolUseVisibleText(name, contentBlock.input)
+        )
+      );
       if (name) state.toolNames.push(name);
       state.emittedVisible = true;
       delete contentBlock.provider_specific_fields;
@@ -198,7 +299,10 @@ export function sanitizeAnthropicSseEvent(
         ...contentBlock,
         text: scrubModelText(contentBlock.text),
       };
-      if (contentBlock.text) state.emittedVisible = true;
+      if (contentBlock.text) {
+        state.emittedVisible = true;
+        state.emittedModelText = true;
+      }
     }
 
     const clientIndex = state.nextClientIndex++;
@@ -234,6 +338,7 @@ export function sanitizeAnthropicSseEvent(
       if (!scrubbed) return [];
       nextDelta = { type: "text_delta", text: scrubbed };
       state.emittedVisible = true;
+      state.emittedModelText = true;
     }
 
     return [
@@ -329,7 +434,14 @@ export function sanitizeAnthropicMessageContent(
     out.push(block);
   }
   if (hasTool && !out.some((b) => b.type === "text")) {
-    out.unshift({ type: "text", text: "Working on it…" });
+    const toolBlock = out.find((b) => b.type === "tool_use") as
+      | { name?: string; input?: unknown }
+      | undefined;
+    const name = typeof toolBlock?.name === "string" ? toolBlock.name : "tool";
+    out.unshift({
+      type: "text",
+      text: formatToolUseVisibleText(name, toolBlock?.input),
+    });
   }
   if (out.length === 0) {
     out.push({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSanitizeAnthropicSseState,
+  formatToolUseVisibleText,
   sanitizeAnthropicMessageContent,
   sanitizeAnthropicSseEvent,
   sanitizeToolUseId,
@@ -14,7 +15,7 @@ function ev(event: string, data: unknown): AnthropicSseEvent {
 }
 
 describe("sanitizeAnthropicSse", () => {
-  it("drops thinking, injects Working text before tool_use, remaps indices", () => {
+  it("drops thinking, injects tool-specific text before tool_use, remaps indices", () => {
     const state = createSanitizeAnthropicSseState();
     const out: AnthropicSseEvent[] = [];
     const upstream = [
@@ -76,7 +77,7 @@ describe("sanitizeAnthropicSse", () => {
     const text = out.find(
       (e) =>
         e.event === "content_block_delta" &&
-        JSON.stringify(e.data).includes("Working on it")
+        JSON.stringify(e.data).includes("Running command")
     );
     expect(text).toBeTruthy();
     expect(state.toolNames).toEqual(["Bash"]);
@@ -124,7 +125,7 @@ describe("sanitizeAnthropicSse", () => {
     expect(sanitizeToolUseId("call:1.2")).toBe("call_1_2");
   });
 
-  it("drops thinking from non-stream content and prefixes Working for tools", () => {
+  it("drops thinking from non-stream content and prefixes tool-specific text", () => {
     const cleaned = sanitizeAnthropicMessageContent([
       { type: "thinking", thinking: "The user is frustrated" },
       {
@@ -135,8 +136,60 @@ describe("sanitizeAnthropicSse", () => {
         provider_specific_fields: null,
       },
     ]);
-    expect(cleaned[0]).toEqual({ type: "text", text: "Working on it…" });
+    expect(cleaned[0]).toEqual({ type: "text", text: "Reading `a.ts`…" });
     expect(cleaned[1]).toMatchObject({ type: "tool_use", name: "Read" });
     expect(JSON.stringify(cleaned)).not.toContain("frustrated");
+  });
+
+  it("formatToolUseVisibleText describes common tools", () => {
+    expect(formatToolUseVisibleText("Read", { path: "src/index.ts" })).toBe(
+      "Reading `src/index.ts`…"
+    );
+    expect(formatToolUseVisibleText("Bash", { command: "npm test" })).toBe(
+      "Running `npm test`…"
+    );
+    expect(formatToolUseVisibleText("Write", { path: "out.md" })).toBe(
+      "Writing `out.md`…"
+    );
+  });
+
+  it("injects a label before each tool when the model emits no text", () => {
+    const state = createSanitizeAnthropicSseState();
+    const out: AnthropicSseEvent[] = [];
+    for (const e of [
+      ev("message_start", {
+        type: "message_start",
+        message: { id: "msg_1", model: "glm", content: [] },
+      }),
+      ev("content_block_start", {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "t1",
+          name: "Read",
+          input: { path: "a.ts" },
+        },
+      }),
+      ev("content_block_stop", { type: "content_block_stop", index: 0 }),
+      ev("content_block_start", {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "t2",
+          name: "Write",
+          input: { path: "b.ts" },
+        },
+      }),
+      ev("content_block_stop", { type: "content_block_stop", index: 1 }),
+    ]) {
+      out.push(...sanitizeAnthropicSseEvent(state, e));
+    }
+    const labels = out
+      .filter((e) => e.event === "content_block_delta")
+      .map((e) => JSON.stringify(e.data));
+    expect(labels.some((l) => l.includes("Reading `a.ts`"))).toBe(true);
+    expect(labels.some((l) => l.includes("Writing `b.ts`"))).toBe(true);
   });
 });

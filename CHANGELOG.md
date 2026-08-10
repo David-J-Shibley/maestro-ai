@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-08-10
+
+### Fixed
+- **Claude Code proxy reliability** — route log (`/status` `recentRoutes`) records after streamed and JSON completions, not only plain-reply paths (`recordProxyRoute` / `route-log.ts`).
+- **Instant chitchat bypass** — trivial prompts (`hi`, status pings) skip upstream routing and LLM classify on 200KB+ / 90-tool payloads; SSE opens immediately with keepalive.
+- **Tool-catalog context blowup** — `shouldOmitHarnessTools()` omits harness tool catalogs when tools aren’t needed: role-persona asks (`You are an expert…`), large catalogs (≥20 tools) without strong tool evidence, harness meta / suggestion mode.
+- **Agentic tool forwarding** — `needsHarnessAgentTools()` keeps tools for `do it please`, stall complaints, build imperatives, and short nudges after the assistant promised implementation (no more plain-text-only when the agent should act).
+- **Mid-loop tool scoring** — `recentToolTurns` no longer floors `toolNeedScore` at 0.7 on every turn; only when the current ask continues tool work.
+- **GLM/LiteLLM SSE sanitizer** — injects tool-specific status text (`Reading \`src/foo.ts\`…`, `Running \`npm test\`…`) instead of generic “Working on it…”; one label per tool when the model emits no visible text.
+- **LLM classify** — skips trivial chitchat in `shadow` / `on` modes (avoids pointless local_fast calls on `hi`).
+
+### Added
+- Exported helpers: `isHarnessRolePersonaAsk`, `needsHarnessAgentTools`, `shouldOmitHarnessTools`, `formatToolUseVisibleText`, `extractRecentAssistantText`.
+- Docs: [`docs/DEMO.md`](docs/DEMO.md), [`docs/COMPARISON.md`](docs/COMPARISON.md); examples: `run-routing-demo.sh`, `demo-sticky.mjs`.
+
+[1.9.1]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.9.1
+
 ## [1.9.0] - 2026-08-04
 
 ### Added

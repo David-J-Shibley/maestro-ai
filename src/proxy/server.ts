@@ -38,14 +38,18 @@ import {
   isTrivialChitchat,
   countRecentToolTurns,
   hasStrongToolEvidence,
+  extractLatestUserPrompt,
+  extractRecentAssistantText,
+  needsHarnessAgentTools,
+  shouldOmitHarnessTools,
 } from "../analyzer/task-analyzer.js";
 import {
   resolveHarnessProfile,
   type HarnessProfile,
   type HarnessProfileName,
 } from "./harness-profile.js";
-import { getRouteLog } from "./route-log.js";
-import { getStickyTier, setStickyTier } from "./session-sticky.js";
+import { getRouteLog, recordProxyRoute } from "./route-log.js";
+import { getStickyTier } from "./session-sticky.js";
 import {
   completeAnthropicPlainText,
   completeOpenAiPlainText,
@@ -643,6 +647,7 @@ async function streamRoutedAnthropic(opts: {
   const upstreamMessages = fullMessages ?? messages;
   const plainFallback = plainReplyFallback(ask ?? "");
   const profile = resolveHarnessProfile(options.profile);
+  const sessionId = proxyOverrides(req, options, profile).session?.sessionId;
 
   // Route before opening SSE so native upstream can own message_start.
   const { routing, analysis } = await dryRunRoute(
@@ -660,18 +665,30 @@ async function streamRoutedAnthropic(opts: {
     return;
   }
 
+  recordProxyRoute({
+    sessionId,
+    ask,
+    tier: routing.tier,
+    model: routing.model,
+    started,
+    outcome: "routed",
+  });
+
   // When Claude Code attaches tools but this turn doesn't need them, omit tools.
   // The buffered plain-reply + greeting-fallback path is ONLY for trivial chitchat —
   // real Q&A still omits tools but streams.
   // Never strip tools mid-agent loop — except harness meta (suggestion/recap),
   // which must stay tool-free even if recent_tools > 0.
   const askText = ask ?? "";
-  const harnessMeta =
-    isHarnessMetaAsk(askText) && !isTrivialChitchat(askText);
-  const omitTools =
-    profile.omitToolsWhenOmittable &&
-    (harnessMeta ||
-      (!analysis.requiresToolUse && recentToolTurns === 0));
+  const recentAssistantText = extractRecentAssistantText(fullMessages);
+  const omitTools = shouldOmitHarnessTools({
+    ask: askText,
+    tools,
+    analysis,
+    recentToolTurns,
+    recentAssistantText,
+    omitToolsWhenOmittable: profile.omitToolsWhenOmittable,
+  });
   const softPlain =
     omitTools &&
     Array.isArray(tools) &&
@@ -703,6 +720,7 @@ async function streamRoutedAnthropic(opts: {
     forwardTools.length > 0 &&
     (recentToolTurns > 0 ||
       hasStrongToolEvidence(askText) ||
+      needsHarnessAgentTools(askText, recentAssistantText) ||
       analysis.requiresToolUse);
   const forcedToolChoice = forceToolUse
     ? (anthropicBody.tool_choice ?? { type: "any" })
@@ -775,7 +793,14 @@ async function streamRoutedAnthropic(opts: {
       routedModel: routing.model,
       routedTier: routing.tier,
     });
-    setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+    recordProxyRoute({
+      sessionId,
+      ask,
+      tier: routing.tier,
+      model: routing.model,
+      started,
+      toolsOmitted: omitTools && tools?.length ? tools.length : undefined,
+    });
     return;
   }
 
@@ -809,8 +834,6 @@ async function streamRoutedAnthropic(opts: {
 
   beginAnthropicSse(res, { id: provisionalId, model: clientModel });
   let stopHeartbeat = startSseHeartbeat(res, "anthropic", 5_000);
-  stopHeartbeat();
-  stopHeartbeat = () => undefined;
 
   const emitter = new AnthropicStreamEmitter(res);
   const abort = new AbortController();
@@ -842,7 +865,15 @@ async function streamRoutedAnthropic(opts: {
 
   if (!canWrite(res)) return;
   const { stopReason } = emitter.finish();
-  setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+  stopHeartbeat();
+  recordProxyRoute({
+    sessionId,
+    ask,
+    tier: routing.tier,
+    model: routing.model,
+    started,
+    toolsOmitted: omitTools && tools?.length ? tools.length : undefined,
+  });
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${emitter.textLength}ch ` +
@@ -893,16 +924,37 @@ async function respondAnthropicPlainText(opts: {
     hintExtra,
   } = opts;
 
-  const { text, outcome, plainRetry } = await completeAnthropicPlainText({
-    endpoint,
-    messages: anthropicBody.messages,
-    system: anthropicBody.system,
-    maxTokens,
-    forwardHeaders,
-    fallback,
-    plainHint: PLAIN_TEXT_ONLY_HINT,
-    hintExtra,
-  });
+  // Open SSE immediately — Claude Code idle-times out if routing/upstream blocks with no bytes.
+  beginAnthropicSse(res, { id: provisionalId, model: clientModel });
+  const stopHeartbeat = startSseHeartbeat(res, "anthropic", 5_000);
+
+  let text: string;
+  let outcome: import("./plain-reply.js").PlainOutcome = "ok";
+  let plainRetry = false;
+
+  try {
+    if (ask && isTrivialChitchat(ask)) {
+      // Chitchat plain turns: skip upstream — instant greeting, no LiteLLM/Ollama wait.
+      text = fallback;
+    } else {
+      const result = await completeAnthropicPlainText({
+        endpoint: { ...endpoint, timeoutMs: Math.min(endpoint.timeoutMs ?? 300_000, 30_000) },
+        messages: anthropicBody.messages,
+        system: anthropicBody.system,
+        maxTokens,
+        forwardHeaders,
+        fallback,
+        plainHint: PLAIN_TEXT_ONLY_HINT,
+        hintExtra,
+      });
+      text = result.text;
+      outcome = result.outcome;
+      plainRetry = result.plainRetry;
+    }
+  } finally {
+    stopHeartbeat();
+  }
+
   recordPlainReplyTelemetry({
     config,
     sessionId,
@@ -914,11 +966,12 @@ async function respondAnthropicPlainText(opts: {
     outcome,
     plainRetry,
   });
-  emitAnthropicTextMessage(res, {
-    id: provisionalId,
-    model: clientModel,
-    text,
-  });
+  writeAnthropicTextContent(res, text);
+  try {
+    res.end();
+  } catch {
+    /* ignore */
+  }
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${text.length}ch stop=end_turn ` +
@@ -964,13 +1017,32 @@ async function respondOpenAiPlainText(opts: {
     ask,
   } = opts;
 
-  const { text, outcome, plainRetry } = await completeOpenAiPlainText({
-    endpoint,
-    tier,
-    messages,
-    maxTokens,
-    fallback,
-  });
+  beginAnthropicSse(res, { id: provisionalId, model: clientModel });
+  const stopHeartbeat = startSseHeartbeat(res, "anthropic", 5_000);
+
+  let text: string;
+  let outcome: import("./plain-reply.js").PlainOutcome = "ok";
+  let plainRetry = false;
+
+  try {
+    if (ask && isTrivialChitchat(ask)) {
+      text = fallback;
+    } else {
+      const result = await completeOpenAiPlainText({
+        endpoint: { ...endpoint, timeoutMs: Math.min(endpoint.timeoutMs ?? 300_000, 30_000) },
+        tier,
+        messages,
+        maxTokens,
+        fallback,
+      });
+      text = result.text;
+      outcome = result.outcome;
+      plainRetry = result.plainRetry;
+    }
+  } finally {
+    stopHeartbeat();
+  }
+
   recordPlainReplyTelemetry({
     config,
     sessionId,
@@ -982,11 +1054,12 @@ async function respondOpenAiPlainText(opts: {
     outcome,
     plainRetry,
   });
-  emitAnthropicTextMessage(res, {
-    id: provisionalId,
-    model: clientModel,
-    text,
-  });
+  writeAnthropicTextContent(res, text);
+  try {
+    res.end();
+  } catch {
+    /* ignore */
+  }
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${text.length}ch stop=end_turn ` +
@@ -998,19 +1071,30 @@ async function respondOpenAiPlainText(opts: {
 
 function emitAnthropicTextMessage(
   res: ServerResponse,
-  opts: { id: string; model: string; text: string }
+  opts: { id: string; model: string; text: string; skipStart?: boolean }
 ): void {
-  beginAnthropicSse(res, { id: opts.id, model: opts.model });
+  if (!opts.skipStart) {
+    beginAnthropicSse(res, { id: opts.id, model: opts.model });
+  }
+  writeAnthropicTextContent(res, opts.text);
+  try {
+    res.end();
+  } catch {
+    /* ignore */
+  }
+}
+
+function writeAnthropicTextContent(res: ServerResponse, text: string): void {
   writeAnthropicEvent(res, "content_block_start", {
     type: "content_block_start",
     index: 0,
     content_block: { type: "text", text: "" },
   });
-  if (opts.text) {
+  if (text) {
     writeAnthropicEvent(res, "content_block_delta", {
       type: "content_block_delta",
       index: 0,
-      delta: { type: "text_delta", text: opts.text },
+      delta: { type: "text_delta", text },
     });
   }
   writeAnthropicEvent(res, "content_block_stop", {
@@ -1020,13 +1104,67 @@ function emitAnthropicTextMessage(
   writeAnthropicEvent(res, "message_delta", {
     type: "message_delta",
     delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: Math.max(1, Math.ceil(opts.text.length / 4)) },
+    usage: { output_tokens: Math.max(1, Math.ceil(text.length / 4)) },
   });
   writeAnthropicEvent(res, "message_stop", { type: "message_stop" });
-  try {
-    res.end();
-  } catch {
-    /* ignore */
+}
+
+/** Instant chitchat — no dryRunRoute, no upstream LLM (works when Ollama/LiteLLM are down). */
+function replyInstantChitchatAnthropic(opts: {
+  res: ServerResponse;
+  humanAsk: string;
+  clientModel: string;
+  provisionalId: string;
+  wantsStream: boolean;
+  sessionId?: string;
+  started: number;
+  verbose: boolean;
+}): void {
+  const text = plainReplyFallback(opts.humanAsk);
+  recordProxyRoute({
+    sessionId: opts.sessionId,
+    ask: opts.humanAsk,
+    tier: "local_fast",
+    model: "chitchat-instant",
+    started: opts.started,
+    plain: true,
+    outcome: "ok",
+  });
+  if (opts.wantsStream) {
+    emitAnthropicTextMessage(opts.res, {
+      id: opts.provisionalId,
+      model: opts.clientModel,
+      text,
+    });
+  } else {
+    if (!opts.res.headersSent) {
+      opts.res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    }
+    endJsonKeepalive(opts.res, {
+      id: opts.provisionalId,
+      type: "message",
+      role: "assistant",
+      model: opts.clientModel,
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: {
+        input_tokens: 0,
+        output_tokens: Math.max(1, Math.ceil(text.length / 4)),
+      },
+      maestro: {
+        tier: "local_fast",
+        routed_model: "chitchat-instant",
+        provider: "maestro",
+        reason: "instant chitchat (no upstream)",
+      },
+    });
+  }
+  if (opts.verbose) {
+    log(
+      `instant chitchat ok ${Date.now() - opts.started}ms stream=${opts.wantsStream} ` +
+        `ask=${JSON.stringify(opts.humanAsk.slice(0, 40))}`
+    );
   }
 }
 
@@ -1397,7 +1535,13 @@ async function streamRoutedOpenAi(opts: {
     if (verbose) {
       log(`ok ${Date.now() - started}ms openai-stream routed=${routing.model}`);
     }
-    setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+    recordProxyRoute({
+      sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+      ask: extractLatestUserPrompt(messages),
+      tier: routing.tier,
+      model: routing.model,
+      started,
+    });
   } catch (err) {
     stopHeartbeat();
     throw err;
@@ -1667,6 +1811,21 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           );
         }
 
+        const sessionId = proxyOverrides(req, options, profile).session?.sessionId;
+        if (humanAsk && isTrivialChitchat(humanAsk) && profile.omitToolsWhenOmittable) {
+          replyInstantChitchatAnthropic({
+            res,
+            humanAsk,
+            clientModel,
+            provisionalId,
+            wantsStream,
+            sessionId,
+            started,
+            verbose,
+          });
+          return;
+        }
+
         if (wantsStream) {
           try {
             await streamRoutedAnthropic({
@@ -1722,13 +1881,15 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
           let stopReason = "end_turn";
           let inputTokens = 0;
           let outputTokens = 1;
-          const harnessMeta =
-            isHarnessMetaAsk(humanAsk || "") &&
-            !isTrivialChitchat(humanAsk || "");
-          const omitTools =
-            profile.omitToolsWhenOmittable &&
-            (harnessMeta ||
-              (!analysis.requiresToolUse && recentToolTurns === 0));
+          const recentAssistantText = extractRecentAssistantText(chatMessages);
+          const omitTools = shouldOmitHarnessTools({
+            ask: humanAsk || "",
+            tools: openAiTools,
+            analysis,
+            recentToolTurns,
+            recentAssistantText,
+            omitToolsWhenOmittable: profile.omitToolsWhenOmittable,
+          });
           const softPlain =
             omitTools &&
             Array.isArray(openAiTools) &&
@@ -1744,6 +1905,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             forwardTools.length > 0 &&
             (recentToolTurns > 0 ||
               hasStrongToolEvidence(humanAsk || "") ||
+              needsHarnessAgentTools(humanAsk || "", recentAssistantText) ||
               analysis.requiresToolUse);
           const forcedToolChoice = forceToolUse
             ? (anthropicBody.tool_choice ?? { type: "any" })
@@ -1751,16 +1913,29 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
 
           if (supportsAnthropicMessages(endpoint)) {
             if (plainReply) {
-              const { text, outcome, plainRetry } = await completeAnthropicPlainText({
-                endpoint,
-                messages: simplifyAnthropicMessagesForPlainReply(scrubbedMessages),
-                system: anthropicBody.system,
-                maxTokens: maxTokens ?? 4096,
-                forwardHeaders,
-                fallback: plainReplyFallback(humanAsk || ""),
-                plainHint: PLAIN_TEXT_ONLY_HINT,
-                hintExtra: profile.plainTextHintExtra,
-              });
+              let text: string;
+              let outcome: import("./plain-reply.js").PlainOutcome = "ok";
+              let plainRetry = false;
+              if (humanAsk && isTrivialChitchat(humanAsk)) {
+                text = plainReplyFallback(humanAsk);
+              } else {
+                const result = await completeAnthropicPlainText({
+                  endpoint: {
+                    ...endpoint,
+                    timeoutMs: Math.min(endpoint.timeoutMs ?? 300_000, 30_000),
+                  },
+                  messages: simplifyAnthropicMessagesForPlainReply(scrubbedMessages),
+                  system: anthropicBody.system,
+                  maxTokens: maxTokens ?? 4096,
+                  forwardHeaders,
+                  fallback: plainReplyFallback(humanAsk || ""),
+                  plainHint: PLAIN_TEXT_ONLY_HINT,
+                  hintExtra: profile.plainTextHintExtra,
+                });
+                text = result.text;
+                outcome = result.outcome;
+                plainRetry = result.plainRetry;
+              }
               content = [{ type: "text", text }];
               stopReason = "end_turn";
               recordPlainReplyTelemetry({
@@ -1896,7 +2071,13 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             );
           }
 
-          setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+          recordProxyRoute({
+            sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+            ask: humanAsk || undefined,
+            tier: routing.tier,
+            model: routing.model,
+            started,
+          });
 
           endJsonKeepalive(res, {
             id: provisionalId,
@@ -2083,7 +2264,13 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             : undefined,
           maestro: maestroMeta,
         });
-        setStickyTier(proxyOverrides(req, options, profile).session?.sessionId, routing.tier);
+        recordProxyRoute({
+          sessionId: proxyOverrides(req, options, profile).session?.sessionId,
+          ask: extractLatestUserPrompt(body.messages),
+          tier: routing.tier,
+          model: routing.model,
+          started,
+        });
       } catch (err) {
         log("chat error:", err instanceof Error ? err.stack ?? err.message : err);
         if (!res.headersSent) {

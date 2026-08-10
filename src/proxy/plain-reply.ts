@@ -6,8 +6,7 @@ import {
 import { chatCompletionWithTools } from "../provider/stream.js";
 import type { ChatMessage } from "../types.js";
 import { logTelemetry } from "../telemetry/logger.js";
-import { setStickyTier } from "./session-sticky.js";
-import { pushRouteLog } from "./route-log.js";
+import { recordProxyRoute } from "./route-log.js";
 import {
   coercePlainAssistantText,
   mergeAnthropicSystem,
@@ -135,14 +134,13 @@ export function recordPlainReplyTelemetry(opts: {
   outcome: PlainOutcome;
   plainRetry: boolean;
 }): void {
-  if (opts.sessionId) setStickyTier(opts.sessionId, opts.routedTier);
-  pushRouteLog({
-    at: new Date().toISOString(),
-    ask: opts.ask?.slice(0, 80),
+  recordProxyRoute({
+    sessionId: opts.sessionId,
+    ask: opts.ask,
     tier: opts.routedTier,
     model: opts.routedModel,
+    started: opts.started,
     plain: true,
-    latencyMs: Date.now() - opts.started,
     coerced: opts.outcome === "plain_coerced" || opts.outcome === "plain_fallback",
     plainRetry: opts.plainRetry,
     outcome: opts.outcome,

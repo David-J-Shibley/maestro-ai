@@ -8,6 +8,7 @@
  */
 import { getPrimaryEndpoint } from "../config/tier-config.js";
 import { chatCompletion } from "../provider/openai-compatible.js";
+import { isTrivialChitchat } from "./task-analyzer.js";
 import type {
   ModelTier,
   RiskLevel,
@@ -66,9 +67,11 @@ export function resolveLlmClassifyMode(
 /** When heuristics are uncertain enough to justify a cheap local call. */
 export function shouldRunLlmClassify(
   analysis: TaskAnalysis,
-  mode: LlmClassifyMode
+  mode: LlmClassifyMode,
+  userPrompt?: string
 ): boolean {
   if (mode === "off") return false;
+  if (userPrompt && isTrivialChitchat(userPrompt)) return false;
   if (analysis.confidence < 0.65) return true;
   if (analysis.taskType === "unknown") return true;
   // Borderline tool-need — common Claude Code false +/- zone
@@ -248,7 +251,7 @@ export async function enrichAnalysisWithLlmClassify(
   config: RouterConfig
 ): Promise<TaskAnalysis> {
   const mode = resolveLlmClassifyMode(config.routing);
-  if (!shouldRunLlmClassify(analysis, mode)) {
+  if (!shouldRunLlmClassify(analysis, mode, userPrompt)) {
     return analysis;
   }
   const llm = await classifyWithLocalFast(config, userPrompt);

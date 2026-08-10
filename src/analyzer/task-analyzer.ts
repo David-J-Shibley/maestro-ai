@@ -60,7 +60,7 @@ const TOOL_TASK_TYPES: TaskType[] = [
 
 /** Hard verbs that usually mean “use a tool now”. */
 const HARD_TOOL_ACTION_RE =
-  /\b(list|read|write|edit|create|delete|run|bash|execute|search|find|open|fix|implement|debug|refactor|test|commit|push|install|mkdir|rm\b|mv\b|cp\b|cat\b|grep|curl|wget)\b/i;
+  /\b(list|read|write|edit|create|delete|run|bash|execute|search|find|open|fix|implement|debug|refactor|test|commit|push|install|mkdir|rm\b|mv\b|cp\b|cat\b|grep|curl|wget|build|scaffold|bootstrap|setup|set up|generate)\b/i;
 
 /** Softer explore verbs — only strong when paired with a concrete target. */
 const SOFT_TOOL_ACTION_RE =
@@ -91,6 +91,75 @@ export function hasStrongToolEvidence(ask: string): boolean {
   // "look in the repo" / "explore the codebase" — soft verb needs a target
   if (softVerb && hasTarget) return true;
   return false;
+}
+
+/** Short imperatives / build asks that must keep the harness tool catalog attached. */
+const AGENTIC_IMPERATIVE_RE =
+  /^(do it|go ahead|just do( it)?|please do|yes,? do( it)?|make it happen)\b/i;
+
+const AGENTIC_BUILD_RE =
+  /\b(start building|start implementing|get started|scaffold|spin up|bootstrap|set up the|create the (app|project|repo)|write the (code|blueprint|files?)|build (it|this|the)|implement (it|this|now)|run the (command|script))\b/i;
+
+const AGENTIC_STALL_COMPLAINT_RE =
+  /\b(you stopped|didn't (actually |really )?(do|finish|start)|about to do something|were about to|why did you stop|actually (do|start|build)|keep going and)\b/i;
+
+/**
+ * User wants the coding agent to act (write files, run commands) this turn.
+ * When true, never omit tools or inject plain-text-only hints.
+ */
+export function needsHarnessAgentTools(
+  ask: string,
+  recentAssistantText?: string
+): boolean {
+  const t = ask.trim();
+  if (!t) return false;
+  if (hasStrongToolEvidence(t)) return true;
+  if (AGENTIC_IMPERATIVE_RE.test(t)) return true;
+  if (AGENTIC_BUILD_RE.test(t)) return true;
+  if (AGENTIC_STALL_COMPLAINT_RE.test(t)) return true;
+  if (midSessionContinuation(t)) return true;
+
+  // "do it please" / "go ahead" after assistant promised implementation.
+  if (t.length <= 80 && recentAssistantText) {
+    const promisedWork =
+      /\b(i('ll| will)|let me|going to|about to)\b[\s\S]{0,120}\b(build|scaffold|create|set up|implement|write|start|run|install|generate)\b/i.test(
+        recentAssistantText
+      ) ||
+      /\b(starting|scaffolding|creating|building|setting up)\b/i.test(recentAssistantText);
+    const nudge =
+      /^(do it|go ahead|please|yes|ok|okay|continue|now|proceed)\b/i.test(t) ||
+      /\b(do it|go ahead)\b.*\b(please|now)\b/i.test(t);
+    if (promisedWork && nudge) return true;
+  }
+
+  return false;
+}
+
+/** Latest assistant text from a chat thread (for short agentic nudges). */
+export function extractRecentAssistantText(
+  messages: Array<{ role: string; content?: unknown }> | undefined
+): string | undefined {
+  if (!messages?.length) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "assistant") continue;
+    if (typeof m.content === "string" && m.content.trim()) {
+      return m.content.slice(0, 2_000);
+    }
+    if (Array.isArray(m.content)) {
+      const text = m.content
+        .filter(
+          (b): b is { type: "text"; text: string } =>
+            (b as { type?: string }).type === "text" &&
+            typeof (b as { text?: unknown }).text === "string"
+        )
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      if (text) return text.slice(0, 2_000);
+    }
+  }
+  return undefined;
 }
 
 /** Pure chitchat — tools may be present in the harness payload but aren't needed. */
@@ -140,6 +209,7 @@ export function isHarnessMetaAsk(prompt: string): boolean {
   if (t.length > 500) {
     // Still catch Claude Code suggestion-mode prefixes in long blobs.
     if (/^\[suggestion mode:/i.test(prompt.trim())) return true;
+    if (isHarnessRolePersonaAsk(prompt)) return true;
     return false;
   }
   return (
@@ -148,7 +218,24 @@ export function isHarnessMetaAsk(prompt: string): boolean {
     (/\bis coming back\b/i.test(t) && /\brecap\b/i.test(t)) ||
     /^recap\b/i.test(t) ||
     /\brecap (the )?(conversation|session|chat)\b/i.test(t) ||
-    /^summarize (what we|the conversation|this session)\b/i.test(t)
+    /^summarize (what we|the conversation|this session)\b/i.test(t) ||
+    isHarnessRolePersonaAsk(prompt)
+  );
+}
+
+/**
+ * Claude Code / harness role prompts injected as user text ("You are an expert…").
+ * Not a tool request — omit the 50–100 tool catalog when routing.
+ */
+export function isHarnessRolePersonaAsk(prompt: string): boolean {
+  const t = prompt.trim();
+  if (!/^you are (an?|the)\b/i.test(t)) return false;
+  const head = t.slice(0, 600).toLowerCase();
+  return (
+    /\b(expert|assistant|helpful|professional|specialist)\b/.test(head) ||
+    /\b(founder|designer|researcher|strategist|engineer|developer|architect)\b/.test(
+      head
+    )
   );
 }
 
@@ -236,6 +323,7 @@ function detectTaskType(prompt: string, hints?: TaskHints): TaskType {
 
   const lower = prompt.toLowerCase();
 
+  if (isHarnessRolePersonaAsk(prompt)) return "rewriting";
   if (isTrivialCodeTask(lower)) return "code_edit";
   if (isArchitectureTask(lower)) return "architecture";
   if (/\b(debug|fix bug|troubleshoot)\b/.test(lower)) return "debugging";
@@ -419,8 +507,9 @@ export function computeToolNeedScore(opts: {
   const ask = opts.userPrompt;
   const recent = opts.recentToolTurns ?? 0;
 
-  // Resume / recap / soft pings — never need tools.
+  // Resume / recap / role persona / soft pings — never need tools.
   if (isHarnessMetaAsk(ask) && !isTrivialChitchat(ask)) return 0;
+  if (isHarnessRolePersonaAsk(ask)) return 0;
 
   if (isTrivialChitchat(ask)) {
     const t = ask.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
@@ -432,10 +521,12 @@ export function computeToolNeedScore(opts: {
   // Evidence-based scoring — task type alone must not clear the threshold.
   let score = 0;
   const strong = hasStrongToolEvidence(ask);
+  const agentic = needsHarnessAgentTools(ask);
   const weakVerb = !strong && TOOL_ACTION_RE.test(ask);
   const hasTarget = TOOL_TARGET_RE.test(ask) || CODE_FENCE_RE.test(ask);
 
-  if (strong) score += 0.55;
+  if (agentic) score += 0.75;
+  else if (strong) score += 0.55;
   else if (weakVerb) score += 0.2;
   if (hasTarget) score += 0.15;
 
@@ -450,9 +541,10 @@ export function computeToolNeedScore(opts: {
     if (ask.trim().length <= 40 && (strong || midSessionContinuation(ask))) {
       score = Math.max(score, 0.65);
     }
-    // Any recent tool_use / tool_result means Claude Code is mid-loop —
-    // never drop below threshold even if the routed ask is conversational.
-    score = Math.max(score, 0.7);
+    // Only floor high when this turn continues tool work — not every prior tool turn.
+    if (strong || midSessionContinuation(ask)) {
+      score = Math.max(score, 0.7);
+    }
   }
 
   return Math.max(0, Math.min(1, score));
@@ -461,6 +553,45 @@ export function computeToolNeedScore(opts: {
 function midSessionContinuation(ask: string): boolean {
   const t = ask.trim().toLowerCase().replace(/[!?.…]+$/g, "").trim();
   return /^(ok|okay|k|yes|yep|continue|go on|keep going|next|proceed)\b/.test(t);
+}
+
+/** Whether to strip the harness tool catalog for this turn (proxy + plain-reply). */
+export function shouldOmitHarnessTools(opts: {
+  ask: string;
+  tools?: unknown[];
+  analysis: TaskAnalysis;
+  recentToolTurns?: number;
+  recentAssistantText?: string;
+  omitToolsWhenOmittable: boolean;
+}): boolean {
+  if (!opts.omitToolsWhenOmittable) return false;
+
+  const ask = opts.ask ?? "";
+  const recentToolTurns = opts.recentToolTurns ?? 0;
+  const toolCount = Array.isArray(opts.tools) ? opts.tools.length : 0;
+  const largeCatalog = toolCount >= 20;
+
+  // Agentic work must keep tools — even with a large catalog or role-persona history.
+  if (needsHarnessAgentTools(ask, opts.recentAssistantText)) return false;
+
+  const harnessMeta = isHarnessMetaAsk(ask) && !isTrivialChitchat(ask);
+
+  if (harnessMeta || isHarnessRolePersonaAsk(ask)) return true;
+
+  const strongTools =
+    hasStrongToolEvidence(ask) ||
+    opts.analysis.toolNeedScore >= 0.7 ||
+    needsHarnessAgentTools(ask, opts.recentAssistantText);
+  const keepForLoop =
+    recentToolTurns > 0 &&
+    (strongTools || midSessionContinuation(ask));
+
+  if (keepForLoop) return false;
+
+  if (!opts.analysis.requiresToolUse && recentToolTurns === 0) return true;
+  if (largeCatalog && !strongTools) return true;
+
+  return false;
 }
 
 /** Count tool_use / tool_result activity in the last `window` messages. */

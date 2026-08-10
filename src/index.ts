@@ -47,7 +47,12 @@ export {
   computeToolNeedScore,
   hashPrompt,
   isHarnessMetaAsk,
+  isHarnessRolePersonaAsk,
   isTrivialChitchat,
+  hasStrongToolEvidence,
+  needsHarnessAgentTools,
+  extractRecentAssistantText,
+  shouldOmitHarnessTools,
 } from "./analyzer/task-analyzer.js";
 
 export {

@@ -3,7 +3,10 @@ import {
   analyzeTask,
   hasStrongToolEvidence,
   isHarnessMetaAsk,
+  isHarnessRolePersonaAsk,
   isTrivialChitchat,
+  needsHarnessAgentTools,
+  shouldOmitHarnessTools,
 } from "../src/analyzer/task-analyzer.js";
 
 describe("TaskAnalyzer", () => {
@@ -229,7 +232,17 @@ describe("TaskAnalyzer", () => {
     }
   });
 
-  it("keeps tools required when recent tool turns are in progress", () => {
+  it("keeps tools required when mid-agent continuation is explicit", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const analysis = analyzeTask({
+      userPrompt: "ok continue",
+      tools,
+      recentToolTurns: 2,
+    });
+    expect(analysis.requiresToolUse).toBe(true);
+  });
+
+  it("does not keep tools for new conversational turns after prior tool use", () => {
     const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
     const analysis = analyzeTask({
       userPrompt:
@@ -237,6 +250,81 @@ describe("TaskAnalyzer", () => {
       tools,
       recentToolTurns: 2,
     });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(shouldOmitHarnessTools({
+      ask: "Idk, I just haven't seen another tool that intelligently routes prompts",
+      tools,
+      analysis,
+      recentToolTurns: 2,
+      omitToolsWhenOmittable: true,
+    })).toBe(true);
+  });
+
+  it("treats Claude Code role persona prompts as omittable", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const ask =
+      "You are an expert startup founder, senior product designer, UX researcher, and strategist. Help me refine my pitch deck.";
+    expect(isHarnessRolePersonaAsk(ask)).toBe(true);
+    const analysis = analyzeTask({ userPrompt: ask, tools, recentToolTurns: 2 });
+    expect(analysis.requiresToolUse).toBe(false);
+    expect(analysis.requiresLongContext).toBe(false);
+    expect(analysis.taskType).toBe("rewriting");
+    expect(shouldOmitHarnessTools({
+      ask,
+      tools,
+      analysis,
+      recentToolTurns: 2,
+      omitToolsWhenOmittable: true,
+    })).toBe(true);
+  });
+
+  it("keeps tools for agentic imperatives (do it please)", () => {
+    const tools = Array.from({ length: 92 }, (_, i) => ({ name: `T${i}` }));
+    const ask = "do it please";
+    expect(needsHarnessAgentTools(ask)).toBe(true);
+    const analysis = analyzeTask({ userPrompt: ask, tools, recentToolTurns: 0 });
     expect(analysis.requiresToolUse).toBe(true);
+    expect(
+      shouldOmitHarnessTools({
+        ask,
+        tools,
+        analysis,
+        recentToolTurns: 0,
+        omitToolsWhenOmittable: true,
+      })
+    ).toBe(false);
+  });
+
+  it("keeps tools when user complains the agent stalled", () => {
+    const tools = Array.from({ length: 41 }, (_, i) => ({ name: `T${i}` }));
+    const ask = "looks like you were about to do something and you stopped";
+    expect(needsHarnessAgentTools(ask)).toBe(true);
+    const analysis = analyzeTask({ userPrompt: ask, tools });
+    expect(
+      shouldOmitHarnessTools({
+        ask,
+        tools,
+        analysis,
+        omitToolsWhenOmittable: true,
+      })
+    ).toBe(false);
+  });
+
+  it("keeps tools for short nudges after assistant promised work", () => {
+    const tools = Array.from({ length: 41 }, (_, i) => ({ name: `T${i}` }));
+    const ask = "go ahead";
+    const recentAssistantText =
+      "Let me scaffold the Next.js app and write the blueprint document.";
+    expect(needsHarnessAgentTools(ask, recentAssistantText)).toBe(true);
+    const analysis = analyzeTask({ userPrompt: ask, tools });
+    expect(
+      shouldOmitHarnessTools({
+        ask,
+        tools,
+        analysis,
+        recentAssistantText,
+        omitToolsWhenOmittable: true,
+      })
+    ).toBe(false);
   });
 });
