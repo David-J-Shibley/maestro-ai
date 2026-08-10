@@ -315,6 +315,7 @@ Point Cursor or Claude Code at Maestro instead of calling MCP tools for every su
 node dist/cli.js proxy --port 4100 --max-tier hosted_oss --prefer-local
 # or after npm link / global install:
 maestro proxy --port 4100 --max-tier hosted_oss --prefer-local
+maestro proxy --port 4100 --model-tier local_strong   # pin all requests to local_strong
 ```
 
 | Client | Base URL | Notes |
