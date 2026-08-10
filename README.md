@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.9.1** hardens the Claude Code proxy: smart tool-catalog omission, instant chitchat bypass, agentic “do it” tool forwarding, and tool-specific status labels (not generic “Working on it…”). **v1.9.0** adds workload/role hints (`--workload`) and cache-aware session stickiness. **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
+**v1.9.2** validates configured model ids against gateway `/v1/models` in probe, doctor, and proxy startup. **v1.9.1** hardens the Claude Code proxy (tool omission, chitchat bypass, agentic forwarding). **v1.9.0** adds workload/role hints and cache-aware session stickiness. **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
 
 ## Quick start (new machine)
 

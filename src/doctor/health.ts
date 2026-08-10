@@ -1,9 +1,9 @@
 import { execSync } from "node:child_process";
 import { loadConfig } from "../config/load-config.js";
-import { listEndpointsForTier } from "../config/tier-config.js";
-import { probeEndpoint } from "../provider/probe.js";
-import type { ModelTier } from "../types.js";
-import { TIER_ORDER } from "../types.js";
+import {
+  formatValidationIssue,
+  validateConfiguredModels,
+} from "../provider/model-catalog.js";
 
 export interface DoctorCheck {
   name: string;
@@ -27,20 +27,16 @@ export async function runDoctor(configPath?: string): Promise<DoctorReport> {
   checks.push(checkFeatherlessKey());
   checks.push(checkLitellmProcess());
 
-  for (const tier of TIER_ORDER) {
-    const endpoints = listEndpointsForTier(config, tier);
-    for (let i = 0; i < endpoints.length; i++) {
-      const ep = endpoints[i]!;
-      const label = i === 0 ? `${tier} primary` : `${tier} fallback`;
-      const result = await probeEndpoint(ep);
-      checks.push({
-        name: label,
-        pass: result.available,
-        detail: result.available
-          ? `OK (${result.latencyMs}ms) ${ep.provider}/${ep.model}`
-          : result.error ?? "unavailable",
-      });
-    }
+  const validations = await validateConfiguredModels(config);
+  for (const v of validations) {
+    const ok = v.reachable && v.modelRegistered;
+    checks.push({
+      name: `${v.label} model`,
+      pass: ok,
+      detail: ok
+        ? `OK (${v.latencyMs ?? "?"}ms) ${v.endpoint.provider}/${v.endpoint.model}`
+        : formatValidationIssue(v) || v.error || "unavailable",
+    });
   }
 
   return {
@@ -118,11 +114,12 @@ function checkFeatherlessKey(): DoctorCheck {
 function checkLitellmProcess(): DoctorCheck {
   try {
     const out = execSync("pgrep -fl litellm 2>/dev/null || true", { encoding: "utf8" }).trim();
-    const hasProcess = out.length > 0;
+    const lines = out.split("\n").filter(Boolean);
+    const serverLine = lines.find((l) => /\blitellm\b/.test(l) && !/\bvi\s+/.test(l));
     return {
       name: "litellm_process",
-      pass: hasProcess,
-      detail: hasProcess ? out.split("\n")[0] ?? "running" : "no litellm process found",
+      pass: Boolean(serverLine),
+      detail: serverLine ?? (lines[0] ?? "no litellm server process found"),
     };
   } catch {
     return { name: "litellm_process", pass: false, detail: "could not check process" };

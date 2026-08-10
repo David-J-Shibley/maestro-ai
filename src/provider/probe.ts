@@ -1,4 +1,9 @@
 import { listEndpointsForTier, resolveEndpointForTier } from "../config/tier-config.js";
+import {
+  clearModelCatalogCache,
+  fetchModelCatalog,
+  isModelInCatalog,
+} from "./model-catalog.js";
 import type { ModelEndpointConfig, ModelTier, RouterConfig } from "../types.js";
 
 export interface ProbeResult {
@@ -9,6 +14,8 @@ export interface ProbeResult {
   error?: string;
   model: string;
   provider: string;
+  /** False when gateway is up but configured model id is missing from /v1/models. */
+  modelRegistered?: boolean;
 }
 
 export type ProbeSnapshot = ProbeResult;
@@ -55,43 +62,50 @@ function cacheKey(config: RouterConfig): string {
 /** Clear in-memory probe cache (tests / doctor force-refresh). */
 export function clearProbeCache(): void {
   probeCache.clear();
+  clearModelCatalogCache();
+}
+
+export interface EndpointProbeResult {
+  available: boolean;
+  latencyMs?: number;
+  error?: string;
+  modelRegistered?: boolean;
 }
 
 export async function probeEndpoint(
   endpoint: ModelEndpointConfig,
   timeoutMs = 3000
-): Promise<{ available: boolean; latencyMs?: number; error?: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const start = Date.now();
+): Promise<EndpointProbeResult> {
+  const catalog = await fetchModelCatalog(endpoint, timeoutMs);
 
-  try {
-    const url = endpoint.baseUrl.replace(/\/$/, "");
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (endpoint.apiKey) {
-      headers.Authorization = `Bearer ${endpoint.apiKey}`;
-    }
-
-    const response = await fetch(`${url}/models`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-
-    return {
-      available: response.ok,
-      latencyMs: Date.now() - start,
-      error: response.ok ? undefined : `HTTP ${response.status}`,
-    };
-  } catch (err) {
+  if (!catalog.ok) {
     return {
       available: false,
-      latencyMs: Date.now() - start,
-      error: err instanceof Error ? err.message : String(err),
+      latencyMs: catalog.latencyMs,
+      error: catalog.error ?? "catalog fetch failed",
+      modelRegistered: false,
     };
-  } finally {
-    clearTimeout(timer);
   }
+
+  const registered = isModelInCatalog(endpoint.model, catalog.ids);
+  if (!registered) {
+    const sample =
+      catalog.ids.length > 0
+        ? catalog.ids.slice(0, 6).join(", ")
+        : "(empty catalog)";
+    return {
+      available: false,
+      latencyMs: catalog.latencyMs,
+      modelRegistered: false,
+      error: `model "${endpoint.model}" not in gateway catalog (saw: ${sample})`,
+    };
+  }
+
+  return {
+    available: true,
+    latencyMs: catalog.latencyMs,
+    modelRegistered: true,
+  };
 }
 
 function slotForIndex(
@@ -121,6 +135,7 @@ export async function probeTier(
     error: probes[i]!.error,
     model: ep.model,
     provider: ep.provider,
+    modelRegistered: probes[i]!.modelRegistered,
   }));
 
   const primary = results[0]!;

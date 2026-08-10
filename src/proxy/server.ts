@@ -7,6 +7,7 @@
  * Always echo the client-requested model id; real routed model is in metadata.
  */
 import { loadConfig } from "../config/load-config.js";
+import { validateConfiguredModels, formatValidationIssue } from "../provider/model-catalog.js";
 import { getPrimaryEndpoint } from "../config/tier-config.js";
 import { dryRunRoute } from "../routed-llm-call.js";
 import { chatCompletionStream, chatCompletionWithTools } from "../provider/stream.js";
@@ -1567,6 +1568,14 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
   const profile = resolveHarnessProfile(options.profile);
   const config = loadConfig(options.configPath);
   const ephemeralSessionId = options.sessionId ?? `proxy-${randomUUID().slice(0, 8)}`;
+
+  void validateConfiguredModels(config).then((validations) => {
+    for (const v of validations) {
+      if (v.reachable && v.modelRegistered) continue;
+      const issue = formatValidationIssue(v);
+      if (issue) log("config warn:", issue);
+    }
+  });
 
   installProcessGuards();
 

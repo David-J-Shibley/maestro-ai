@@ -95,6 +95,19 @@ export {
   routedLLMStream,
 } from "./provider/stream.js";
 export { probeAllTiers, probeEndpoint, probeTier, clearProbeCache } from "./provider/probe.js";
+export type { EndpointProbeResult } from "./provider/probe.js";
+export {
+  clearModelCatalogCache,
+  fetchModelCatalog,
+  formatValidationIssue,
+  isModelInCatalog,
+  validateConfiguredModels,
+  validateEndpointModel,
+} from "./provider/model-catalog.js";
+export type {
+  EndpointModelValidation,
+  ModelCatalogResult,
+} from "./provider/model-catalog.js";
 export {
   applyOfflineLocalOnlyOverrides,
   checkInternet,
