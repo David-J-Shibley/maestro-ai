@@ -536,4 +536,56 @@ describe("maestro proxy", () => {
     expect(msg.content[0].text).toBe("json ok");
     expect(msg.model).toBe("maestro");
   });
+
+  it("pins model tier from server default and per-request header", async () => {
+    vi.mocked(dryRunRoute).mockClear();
+    const proxy = createProxyServer({
+      port: 0,
+      host: "127.0.0.1",
+      modelTier: "local_fast",
+    });
+    proxies.push(proxy);
+    const port = await listen(proxy);
+
+    await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "summarize this paragraph in two sentences" }],
+        stream: false,
+      }),
+    });
+
+    expect(dryRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: expect.objectContaining({ modelTier: "local_fast" }),
+      }),
+      expect.anything()
+    );
+
+    vi.mocked(dryRunRoute).mockClear();
+
+    await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Maestro-Model-Tier": "hosted_oss",
+      },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "refactor auth" }],
+        stream: false,
+      }),
+    });
+
+    expect(dryRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: expect.objectContaining({ modelTier: "hosted_oss" }),
+      }),
+      expect.anything()
+    );
+  });
 });

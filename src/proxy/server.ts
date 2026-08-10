@@ -72,6 +72,7 @@ import type {
   RoutingMode,
 } from "../types.js";
 import { isRoutingMode } from "../routing/modes.js";
+import { TIER_ORDER } from "../types.js";
 import { PACKAGE_VERSION } from "../version.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
@@ -85,6 +86,8 @@ export interface ProxyServerOptions {
   sessionId?: string;
   /** Cap routing so Claude Code never escalates to Bedrock/premium. */
   maxTier?: ModelTier;
+  /** Pin every request to this tier (overridable per request via X-Maestro-Model-Tier). */
+  modelTier?: ModelTier;
   alwaysPreferLocal?: boolean;
   /** Log each request + errors to stderr (default true). */
   verbose?: boolean;
@@ -170,7 +173,7 @@ function cors(res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Api-Key, X-Maestro-Mode, Anthropic-Version, Anthropic-Beta"
+    "Content-Type, Authorization, X-Api-Key, X-Maestro-Mode, X-Maestro-Model-Tier, X-Maestro-Session-Id, Anthropic-Version, Anthropic-Beta"
   );
 }
 
@@ -182,6 +185,20 @@ function listModelIds(config: RouterConfig): string[] {
     if (tc.fallback?.model) fromConfig.add(tc.fallback.model);
   }
   return [...new Set([...CLIENT_MODEL_ALIASES, ...fromConfig])];
+}
+
+function parseModelTier(raw: string | undefined): ModelTier | undefined {
+  if (!raw?.trim()) return undefined;
+  const tier = raw.trim() as ModelTier;
+  return TIER_ORDER.includes(tier) ? tier : undefined;
+}
+
+function resolveModelTier(
+  req: IncomingMessage,
+  options: ProxyServerOptions
+): ModelTier | undefined {
+  const headerTier = parseModelTier(headerValue(req, "x-maestro-model-tier"));
+  return headerTier ?? options.modelTier;
 }
 
 function resolveMode(
@@ -570,6 +587,7 @@ function proxyOverrides(
   const headerSession = headerValue(req, "x-maestro-session-id");
   const sessionId = options.sessionId || headerSession || undefined;
   const stickyTier = getStickyTier(sessionId);
+  const modelTier = resolveModelTier(req, options);
   const session =
     sessionId || options.maxTier || options.alwaysPreferLocal || stickyTier || profile.stickyLocalBias
       ? {
@@ -581,6 +599,7 @@ function proxyOverrides(
       : undefined;
   return {
     mode: resolveMode(req, options),
+    modelTier,
     preferLocal: options.alwaysPreferLocal ?? (profile.stickyLocalBias || undefined),
     session,
   };
@@ -1640,6 +1659,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         profile: profile.name,
         mode: options.mode ?? null,
         maxTier: options.maxTier ?? null,
+        modelTier: options.modelTier ?? null,
         preferLocal: Boolean(options.alwaysPreferLocal || profile.stickyLocalBias),
         sessionId: options.sessionId ?? ephemeralSessionId,
         connectivity: {

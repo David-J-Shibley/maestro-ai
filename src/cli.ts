@@ -351,6 +351,12 @@ async function main(): Promise<void> {
       const maxTier = maxTierRaw && TIER_ORDER.includes(maxTierRaw as ModelTier)
         ? (maxTierRaw as ModelTier)
         : undefined;
+      const modelTierRaw =
+        typeof flags["model-tier"] === "string" ? flags["model-tier"] : undefined;
+      const modelTier =
+        modelTierRaw && TIER_ORDER.includes(modelTierRaw as ModelTier)
+          ? (modelTierRaw as ModelTier)
+          : undefined;
       const profile =
         typeof flags.profile === "string" ? flags.profile : "claude-code";
       const { host: h, port: p } = await startProxyServer({
@@ -359,6 +365,7 @@ async function main(): Promise<void> {
         configPath: typeof flags.config === "string" ? flags.config : undefined,
         mode,
         maxTier,
+        modelTier,
         alwaysPreferLocal: Boolean(flags["prefer-local"]),
         sessionId:
           typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
@@ -370,6 +377,7 @@ async function main(): Promise<void> {
       console.log(`Anthropic (Claude Code): ANTHROPIC_BASE_URL=http://${h}:${p}  (no /v1)`);
       console.log(`Profile: ${profile}`);
       if (maxTier) console.log(`Max tier capped at: ${maxTier}`);
+      if (modelTier) console.log(`Model tier pinned to: ${modelTier}`);
       console.log(`Status: http://${h}:${p}/status`);
       console.log("Model id can stay sonnet/maestro/etc. — Maestro routes underneath.");
       console.log("Ctrl+C to stop.");
@@ -543,7 +551,7 @@ Usage:
   maestro analyze [--all]             Telemetry routing insights & recommendations
   maestro insights                    Alias for analyze
   maestro feedback <telemetry-id>     Record rating/accepted feedback
-  maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss]
+  maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss] [--model-tier local_strong]
   maestro version                     Print package version
 
 Profiles (for init):
@@ -593,6 +601,7 @@ Flags:
   --session-id <id>        Session ID for budget tracking
   --budget-usd <n>         Session budget cap (enforced)
   --max-tier <tier>        Never route above this tier
+  --model-tier <tier>      Pin proxy requests to this tier (override via X-Maestro-Model-Tier header)
   --always-prefer-local    Session policy: prefer local tiers
   --last <n>               Limit telemetry records (stats/analyze)
   --min-samples <n>        Min samples per task/tier for analyze (default 5)

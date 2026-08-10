@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Proxy tier pin** — `maestro proxy --model-tier <tier>` and per-request `X-Maestro-Model-Tier` header force routing to a specific tier (header overrides server default). Shown on `GET /status` as `modelTier`.
+
 ## [1.9.1] - 2026-08-10
 
 ### Fixed
