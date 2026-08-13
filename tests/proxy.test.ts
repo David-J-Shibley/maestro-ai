@@ -588,4 +588,143 @@ describe("maestro proxy", () => {
       expect.anything()
     );
   });
+
+  it("retries native stream with tools omitted on context overflow", async () => {
+    let streamCalls = 0;
+    vi.mocked(dryRunRoute).mockResolvedValueOnce({
+      analysis: {
+        taskType: "code_edit",
+        difficulty: "medium",
+        riskLevel: "medium",
+        requiresToolUse: true,
+        toolNeedScore: 0.8,
+        requiresCodeReasoning: true,
+        requiresLongContext: false,
+        requiresStructuredOutput: false,
+        estimatedComplexityScore: 3,
+        confidence: 0.9,
+        signals: ["tools_needed"],
+        promptHash: "x",
+      },
+      routing: {
+        tier: "local_strong",
+        model: "glm",
+        provider: "litellm",
+        baseUrl: "http://localhost:4000/v1",
+        reason: "test",
+        fallbackTier: null,
+        debug: [],
+      },
+    } as Awaited<ReturnType<typeof dryRunRoute>>);
+
+    vi.mocked(anthropicMessagesStream).mockImplementation(async function* () {
+      streamCalls++;
+      if (streamCalls === 1) {
+        yield {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_trunc",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "glm",
+              stop_reason: null,
+              usage: { input_tokens: 1, output_tokens: 0 },
+            },
+          },
+          raw: "",
+        };
+        return;
+      }
+      yield {
+        event: "message_start",
+        data: {
+          type: "message_start",
+          message: {
+            id: "msg_ok",
+            type: "message",
+            role: "assistant",
+            content: [],
+            model: "glm",
+            stop_reason: null,
+            usage: { input_tokens: 1, output_tokens: 0 },
+          },
+        },
+        raw: "",
+      };
+      yield {
+        event: "content_block_start",
+        data: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        },
+        raw: "",
+      };
+      yield {
+        event: "content_block_delta",
+        data: {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Recovered without tools" },
+        },
+        raw: "",
+      };
+      yield {
+        event: "content_block_stop",
+        data: { type: "content_block_stop", index: 0 },
+        raw: "",
+      };
+      yield {
+        event: "message_delta",
+        data: {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { output_tokens: 4 },
+        },
+        raw: "",
+      };
+      yield {
+        event: "message_stop",
+        data: { type: "message_stop" },
+        raw: "",
+      };
+    });
+
+    const proxy = createProxyServer({ port: 0, host: "127.0.0.1" });
+    proxies.push(proxy);
+    const port = await listen(proxy);
+
+    const tools = Array.from({ length: 25 }, (_, i) => ({
+      name: `Tool${i}`,
+      description: `tool ${i}`,
+      input_schema: { type: "object" },
+    }));
+
+    const streamRes = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "refactor the auth module" }],
+        tools,
+        stream: true,
+      }),
+    });
+
+    expect(streamRes.status).toBe(200);
+    const sse = await streamRes.text();
+    expect(streamCalls).toBe(2);
+    expect(sse).toContain("Recovered without tools");
+    expect(sse).toContain("event: message_stop");
+    expect(sse).not.toContain("api_error");
+
+    const retryReq = vi.mocked(anthropicMessagesStream).mock.calls[1]?.[1] as
+      | { tools?: unknown[] }
+      | undefined;
+    expect(retryReq?.tools).toBeUndefined();
+  });
 });

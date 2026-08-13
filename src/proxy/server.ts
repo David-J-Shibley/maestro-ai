@@ -45,6 +45,10 @@ import {
   shouldOmitHarnessTools,
 } from "../analyzer/task-analyzer.js";
 import {
+  anthropicBodyForContextRetry,
+  isNativeContextOverflow,
+} from "./context-retry.js";
+import {
   resolveHarnessProfile,
   type HarnessProfile,
   type HarnessProfileName,
@@ -799,7 +803,7 @@ async function streamRoutedAnthropic(opts: {
       });
       return;
     }
-    await streamAnthropicNative({
+    const streamResult = await streamAnthropicNative({
       res,
       req,
       endpoint,
@@ -819,7 +823,14 @@ async function streamRoutedAnthropic(opts: {
       tier: routing.tier,
       model: routing.model,
       started,
-      toolsOmitted: omitTools && tools?.length ? tools.length : undefined,
+      toolsOmitted:
+        streamResult.contextRetry && tools?.length
+          ? tools.length
+          : omitTools && tools?.length
+            ? tools.length
+            : undefined,
+      contextRetry: streamResult.contextRetry || undefined,
+      outcome: streamResult.truncated ? "truncated" : "ok",
     });
     return;
   }
@@ -1212,7 +1223,7 @@ async function streamAnthropicNative(opts: {
   verbose: boolean;
   routedModel: string;
   routedTier: string;
-}): Promise<void> {
+}): Promise<{ contextRetry: boolean; truncated: boolean }> {
   const {
     res,
     req,
@@ -1228,7 +1239,9 @@ async function streamAnthropicNative(opts: {
     routedTier,
   } = opts;
 
-  if (!canWrite(res) || res.headersSent) return;
+  const emptyResult = { contextRetry: false, truncated: false };
+
+  if (!canWrite(res) || res.headersSent) return emptyResult;
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -1246,104 +1259,192 @@ async function streamAnthropicNative(opts: {
   req.once("aborted", onClientGone);
   req.once("close", onClientGone);
 
-  let stopReason: string | null = null;
-  let textChars = 0;
-  let sawMessageStart = false;
-  let sawMessageStop = false;
-  let lastEvent: string | null = null;
-  let upstreamError: string | null = null;
-  const sanitizeState = createSanitizeAnthropicSseState();
+  type StreamAttempt = {
+    sawMessageStart: boolean;
+    sawMessageStop: boolean;
+    textChars: number;
+    upstreamError: string | null;
+    stopReason: string | null;
+    frames: string[];
+    sanitizeState: ReturnType<typeof createSanitizeAnthropicSseState>;
+    fatalError?: string;
+  };
 
-  try {
-    const normalized = normalizeAnthropicSystem(
-      anthropicBody.messages,
-      anthropicBody.system
-    );
-    const upstreamReq = {
-      model: endpoint.model,
-      messages: normalized.messages,
-      max_tokens:
-        maxTokens ??
-        (typeof anthropicBody.max_tokens === "number" && anthropicBody.max_tokens > 0
-          ? anthropicBody.max_tokens
-          : 4096),
-      stream: true as const,
-      ...(normalized.system != null ? { system: normalized.system } : {}),
-      ...(anthropicBody.tools ? { tools: anthropicBody.tools } : {}),
-      ...(anthropicBody.tool_choice != null
-        ? { tool_choice: anthropicBody.tool_choice }
-        : {}),
-      ...(anthropicBody.temperature != null
-        ? { temperature: anthropicBody.temperature }
-        : {}),
-      ...(anthropicBody.top_p != null ? { top_p: anthropicBody.top_p } : {}),
-      ...(anthropicBody.top_k != null ? { top_k: anthropicBody.top_k } : {}),
-      ...(anthropicBody.stop_sequences != null
-        ? { stop_sequences: anthropicBody.stop_sequences }
-        : {}),
-      ...(anthropicBody.metadata != null ? { metadata: anthropicBody.metadata } : {}),
+  const runNativeStreamAttempt = async (
+    body: typeof anthropicBody,
+    mode: "buffer" | "live"
+  ): Promise<StreamAttempt> => {
+    let stopReason: string | null = null;
+    let textChars = 0;
+    let sawMessageStart = false;
+    let sawMessageStop = false;
+    let lastEvent: string | null = null;
+    let upstreamError: string | null = null;
+    const sanitizeState = createSanitizeAnthropicSseState();
+    const frames: string[] = [];
+
+    const emit = (frame: string) => {
+      if (mode === "live") {
+        if (canWrite(res)) safeWrite(res, frame);
+      } else {
+        frames.push(frame);
+      }
     };
 
-    for await (const ev of anthropicMessagesStream(endpoint, upstreamReq, {
-      signal: abort.signal,
-      headers: forwardHeaders,
-    })) {
-      if (abort.signal.aborted || !canWrite(res)) break;
-      const rewritten = rewriteAnthropicSseModel(ev, clientModel);
-      const sanitized = sanitizeAnthropicSseEvent(sanitizeState, rewritten);
-      for (const out of sanitized) {
-        if (abort.signal.aborted || !canWrite(res)) break;
-        // LiteLLM sometimes emits duplicate message_start frames for OpenAI→Anthropic.
-        if (out.event === "message_start" && lastEvent === "message_start") {
-          continue;
+    try {
+      const normalized = normalizeAnthropicSystem(body.messages, body.system);
+      const upstreamReq = {
+        model: endpoint.model,
+        messages: normalized.messages,
+        max_tokens:
+          maxTokens ??
+          (typeof body.max_tokens === "number" && body.max_tokens > 0
+            ? body.max_tokens
+            : 4096),
+        stream: true as const,
+        ...(normalized.system != null ? { system: normalized.system } : {}),
+        ...(body.tools ? { tools: body.tools } : {}),
+        ...(body.tool_choice != null ? { tool_choice: body.tool_choice } : {}),
+        ...(body.temperature != null ? { temperature: body.temperature } : {}),
+        ...(body.top_p != null ? { top_p: body.top_p } : {}),
+        ...(body.top_k != null ? { top_k: body.top_k } : {}),
+        ...(body.stop_sequences != null ? { stop_sequences: body.stop_sequences } : {}),
+        ...(body.metadata != null ? { metadata: body.metadata } : {}),
+      };
+
+      for await (const ev of anthropicMessagesStream(endpoint, upstreamReq, {
+        signal: abort.signal,
+        headers: forwardHeaders,
+      })) {
+        if (abort.signal.aborted || (mode === "live" && !canWrite(res))) break;
+        const rewritten = rewriteAnthropicSseModel(ev, clientModel);
+        const sanitized = sanitizeAnthropicSseEvent(sanitizeState, rewritten);
+        for (const out of sanitized) {
+          if (abort.signal.aborted || (mode === "live" && !canWrite(res))) break;
+          if (out.event === "message_start" && lastEvent === "message_start") {
+            continue;
+          }
+          lastEvent = out.event;
+          if (out.event === "message_start" && !sawMessageStart) {
+            stopHeartbeat();
+            stopHeartbeat = () => undefined;
+            sawMessageStart = true;
+          }
+          if (out.event === "message_stop") sawMessageStop = true;
+          if (out.event === "error") {
+            const errObj = out.data as { error?: { message?: string }; message?: string };
+            upstreamError =
+              errObj?.error?.message ?? errObj?.message ?? "upstream error event";
+          }
+          const sr = extractStopReason(out.data);
+          if (sr) stopReason = sr;
+          textChars += extractTextDeltaChars(out.event, out.data);
+          const sseFrame =
+            out.raw || `event: ${out.event}\ndata: ${JSON.stringify(out.data)}\n\n`;
+          emit(sseFrame);
         }
-        lastEvent = out.event;
-        if (out.event === "message_start" && !sawMessageStart) {
-          stopHeartbeat();
-          stopHeartbeat = () => undefined;
-          sawMessageStart = true;
-        }
-        if (out.event === "message_stop") sawMessageStop = true;
-        if (out.event === "error") {
-          const errObj = out.data as { error?: { message?: string }; message?: string };
-          upstreamError =
-            errObj?.error?.message ?? errObj?.message ?? "upstream error event";
-        }
-        const sr = extractStopReason(out.data);
-        if (sr) stopReason = sr;
-        textChars += extractTextDeltaChars(out.event, out.data);
-        const sseFrame =
-          out.raw ||
-          `event: ${out.event}\ndata: ${JSON.stringify(out.data)}\n\n`;
-        safeWrite(res, sseFrame);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      upstreamError = message;
+      log("native stream error:", message);
+      if (!sawMessageStart && mode === "live" && canWrite(res)) {
+        writeAnthropicEvent(res, "message_start", {
+          type: "message_start",
+          message: {
+            id: provisionalId,
+            type: "message",
+            role: "assistant",
+            content: [],
+            model: clientModel,
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          },
+        });
+        writeAnthropicSseError(res, message);
+        return {
+          sawMessageStart,
+          sawMessageStop,
+          textChars,
+          upstreamError,
+          stopReason,
+          frames,
+          sanitizeState,
+          fatalError: message,
+        };
       }
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    upstreamError = message;
-    log("native stream error:", message);
-    if (!sawMessageStart && canWrite(res)) {
-      writeAnthropicEvent(res, "message_start", {
-        type: "message_start",
-        message: {
-          id: provisionalId,
-          type: "message",
-          role: "assistant",
-          content: [],
-          model: clientModel,
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 0, output_tokens: 0 },
-        },
-      });
-      writeAnthropicSseError(res, message);
-      return;
-    }
-  } finally {
+
+    return {
+      sawMessageStart,
+      sawMessageStop,
+      textChars,
+      upstreamError,
+      stopReason,
+      frames,
+      sanitizeState,
+    };
+  };
+
+  const toolsPresent =
+    Array.isArray(anthropicBody.tools) && anthropicBody.tools.length > 0;
+  let contextRetry = false;
+  let attempt = await runNativeStreamAttempt(
+    anthropicBody,
+    toolsPresent ? "buffer" : "live"
+  );
+
+  if (attempt.fatalError) {
     req.off("aborted", onClientGone);
     req.off("close", onClientGone);
     stopHeartbeat();
+    return { contextRetry: false, truncated: false };
   }
+
+  if (
+    toolsPresent &&
+    isNativeContextOverflow({
+      sawMessageStart: attempt.sawMessageStart,
+      sawMessageStop: attempt.sawMessageStop,
+      textChars: attempt.textChars,
+      upstreamError: attempt.upstreamError,
+    })
+  ) {
+    if (verbose) log("context_retry=1 omit_tools=1");
+    contextRetry = true;
+    attempt = await runNativeStreamAttempt(
+      anthropicBodyForContextRetry(anthropicBody),
+      "live"
+    );
+    if (attempt.fatalError) {
+      req.off("aborted", onClientGone);
+      req.off("close", onClientGone);
+      stopHeartbeat();
+      return { contextRetry, truncated: false };
+    }
+  } else if (toolsPresent) {
+    if (attempt.sawMessageStart) {
+      stopHeartbeat();
+      stopHeartbeat = () => undefined;
+    }
+    for (const frame of attempt.frames) {
+      if (canWrite(res)) safeWrite(res, frame);
+    }
+  }
+
+  req.off("aborted", onClientGone);
+  req.off("close", onClientGone);
+  stopHeartbeat();
+
+  let {
+    sawMessageStart,
+    sawMessageStop,
+    textChars,
+    upstreamError,
+    stopReason,
+    sanitizeState,
+  } = attempt;
 
   if (abort.signal.aborted && !sawMessageStart) {
     if (canWrite(res)) {
@@ -1354,7 +1455,7 @@ async function streamAnthropicNative(opts: {
       }
     }
     if (verbose) log("client gone before upstream events");
-    return;
+    return { contextRetry, truncated: false };
   }
 
   // LiteLLM often ends after bare message_start when context length is exceeded.
@@ -1404,7 +1505,7 @@ async function streamAnthropicNative(opts: {
       },
     });
     writeAnthropicSseError(res, msg);
-    return;
+    return { contextRetry, truncated: true };
   }
 
   if (canWrite(res)) {
@@ -1415,6 +1516,7 @@ async function streamAnthropicNative(opts: {
     }
   }
 
+  const truncated = sawMessageStart && !sawMessageStop;
   if (verbose) {
     log(
       `ok ${Date.now() - started}ms streamed=${textChars}ch ` +
@@ -1422,9 +1524,12 @@ async function streamAnthropicNative(opts: {
         (sanitizeState.toolNames.length
           ? ` tools_called=${sanitizeState.toolNames.join(",")}`
           : "") +
-        (sawMessageStop ? "" : " truncated=1")
+        (contextRetry ? " context_retry=1" : "") +
+        (truncated ? " truncated=1" : "")
     );
   }
+
+  return { contextRetry, truncated };
 }
 
 async function streamRoutedOpenAi(opts: {

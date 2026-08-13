@@ -11,6 +11,7 @@ export interface RouteLogEntry {
   latencyMs?: number;
   coerced?: boolean;
   plainRetry?: boolean;
+  contextRetry?: boolean;
   outcome?: string;
 }
 
@@ -33,6 +34,7 @@ export function recordProxyRoute(opts: {
   toolsOmitted?: number;
   coerced?: boolean;
   plainRetry?: boolean;
+  contextRetry?: boolean;
   outcome?: string;
 }): void {
   if (opts.sessionId) {
@@ -48,6 +50,7 @@ export function recordProxyRoute(opts: {
     latencyMs: Date.now() - opts.started,
     coerced: opts.coerced,
     plainRetry: opts.plainRetry,
+    contextRetry: opts.contextRetry,
     outcome: opts.outcome ?? "ok",
   });
 }
