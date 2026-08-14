@@ -316,6 +316,7 @@ node dist/cli.js proxy --port 4100 --max-tier hosted_oss --prefer-local
 # or after npm link / global install:
 maestro proxy --port 4100 --max-tier hosted_oss --prefer-local
 maestro proxy --port 4100 --model-tier local_strong   # pin all requests to local_strong
+maestro proxy --port 4100 --model qwen3-4b            # pin all requests to qwen3-4b
 ```
 
 | Client | Base URL | Notes |
@@ -345,6 +346,7 @@ Tips:
 - Cap with `--max-tier hosted_oss` (or `local_strong`) so tool-heavy Claude Code prompts don’t escalate to Bedrock.
 - Pin with `--model-tier local_strong` (or per-request header `X-Maestro-Model-Tier: hosted_oss`) to force a specific tier without changing the client model id.
 - On context overflow (`truncated=1`, zero streamed text), the proxy retries once with tools omitted before erroring — logged as `context_retry=1`.
+- Pin a specific model with `--model qwen3-4b` (or header `X-Maestro-Model: glm`) to skip routing while keeping proxy tool/sanitizer logic.
 - The proxy **echoes your requested model id** (clients won’t reject `glm` / `maestro`); real model is in `maestro.routed_model`.
 - **Tool passthrough:** For LiteLLM backends, Anthropic `/v1/messages` is forwarded natively (tools, tool_use, tool_result, betas) so Claude Code agent loops stay intact. OpenAI-compatible fallback still converts tools when needed.
 - Streaming is live token SSE (OpenAI or Anthropic event shapes). Request logs go to stderr as `[maestro-proxy] …`.

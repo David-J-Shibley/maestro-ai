@@ -113,6 +113,18 @@ describe("Maestro router", () => {
     expect(decision.tier).toBe("hosted_oss");
   });
 
+  it("honors --model override and skips routing", () => {
+    const decision = route("debug this intermittent 500 error", {
+      modelOverride: "qwen3-4b",
+    });
+    expect(decision.model).toBe("qwen3-4b");
+    expect(decision.tier).toBe("local_strong");
+    expect(decision.reason).toContain("model override");
+    expect(decision.debug?.some((line) => line.includes("override: model=qwen3-4b"))).toBe(
+      true
+    );
+  });
+
   it("honors premium-only override", () => {
     const decision = route("summarize this", { premiumOnly: true });
     expect(decision.tier).toBe("premium");

@@ -92,6 +92,8 @@ export interface ProxyServerOptions {
   maxTier?: ModelTier;
   /** Pin every request to this tier (overridable per request via X-Maestro-Model-Tier). */
   modelTier?: ModelTier;
+  /** Pin every request to this model id (overridable per request via X-Maestro-Model). */
+  model?: string;
   alwaysPreferLocal?: boolean;
   /** Log each request + errors to stderr (default true). */
   verbose?: boolean;
@@ -177,7 +179,7 @@ function cors(res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Api-Key, X-Maestro-Mode, X-Maestro-Model-Tier, X-Maestro-Session-Id, Anthropic-Version, Anthropic-Beta"
+    "Content-Type, Authorization, X-Api-Key, X-Maestro-Mode, X-Maestro-Model, X-Maestro-Model-Tier, X-Maestro-Session-Id, Anthropic-Version, Anthropic-Beta"
   );
 }
 
@@ -203,6 +205,14 @@ function resolveModelTier(
 ): ModelTier | undefined {
   const headerTier = parseModelTier(headerValue(req, "x-maestro-model-tier"));
   return headerTier ?? options.modelTier;
+}
+
+function resolveModelOverride(
+  req: IncomingMessage,
+  options: ProxyServerOptions
+): string | undefined {
+  const headerModel = headerValue(req, "x-maestro-model");
+  return headerModel ?? options.model;
 }
 
 function resolveMode(
@@ -592,6 +602,7 @@ function proxyOverrides(
   const sessionId = options.sessionId || headerSession || undefined;
   const stickyTier = getStickyTier(sessionId);
   const modelTier = resolveModelTier(req, options);
+  const modelOverride = resolveModelOverride(req, options);
   const session =
     sessionId || options.maxTier || options.alwaysPreferLocal || stickyTier || profile.stickyLocalBias
       ? {
@@ -604,6 +615,7 @@ function proxyOverrides(
   return {
     mode: resolveMode(req, options),
     modelTier,
+    modelOverride,
     preferLocal: options.alwaysPreferLocal ?? (profile.stickyLocalBias || undefined),
     session,
   };
@@ -1765,6 +1777,7 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
         mode: options.mode ?? null,
         maxTier: options.maxTier ?? null,
         modelTier: options.modelTier ?? null,
+        model: options.model ?? null,
         preferLocal: Boolean(options.alwaysPreferLocal || profile.stickyLocalBias),
         sessionId: options.sessionId ?? ephemeralSessionId,
         connectivity: {

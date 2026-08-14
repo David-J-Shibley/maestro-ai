@@ -86,6 +86,7 @@ function buildOverrides(flags: Record<string, string | boolean>): RouterOverride
 
   return {
     modelTier: typeof flags["model-tier"] === "string" ? (flags["model-tier"] as ModelTier) : undefined,
+    modelOverride: typeof flags.model === "string" ? flags.model.trim() : undefined,
     mode:
       typeof flags.mode === "string" && isRoutingMode(flags.mode) ? flags.mode : undefined,
     preferLocal: flags["prefer-local"] === true || flags["prefer-local"] === "true",
@@ -357,6 +358,10 @@ async function main(): Promise<void> {
         modelTierRaw && TIER_ORDER.includes(modelTierRaw as ModelTier)
           ? (modelTierRaw as ModelTier)
           : undefined;
+      const modelOverride =
+        typeof flags.model === "string" && flags.model.trim()
+          ? flags.model.trim()
+          : undefined;
       const profile =
         typeof flags.profile === "string" ? flags.profile : "claude-code";
       const { host: h, port: p } = await startProxyServer({
@@ -366,6 +371,7 @@ async function main(): Promise<void> {
         mode,
         maxTier,
         modelTier,
+        model: modelOverride,
         alwaysPreferLocal: Boolean(flags["prefer-local"]),
         sessionId:
           typeof flags["session-id"] === "string" ? flags["session-id"] : undefined,
@@ -378,6 +384,7 @@ async function main(): Promise<void> {
       console.log(`Profile: ${profile}`);
       if (maxTier) console.log(`Max tier capped at: ${maxTier}`);
       if (modelTier) console.log(`Model tier pinned to: ${modelTier}`);
+      if (modelOverride) console.log(`Model pinned to: ${modelOverride}`);
       console.log(`Status: http://${h}:${p}/status`);
       console.log("Model id can stay sonnet/maestro/etc. — Maestro routes underneath.");
       console.log("Ctrl+C to stop.");
@@ -551,7 +558,7 @@ Usage:
   maestro analyze [--all]             Telemetry routing insights & recommendations
   maestro insights                    Alias for analyze
   maestro feedback <telemetry-id>     Record rating/accepted feedback
-  maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss] [--model-tier local_strong]
+  maestro proxy [--port 4100] [--profile claude-code] [--max-tier hosted_oss] [--model-tier local_strong] [--model qwen3-4b]
   maestro version                     Print package version
 
 Profiles (for init):
@@ -567,6 +574,7 @@ Proxy harness profiles (--profile):
 Flags:
   --version, -v            Print package version and exit
   --model-tier <tier>      Force tier (local_fast|local_strong|hosted_oss|premium)
+  --model <id>             Force model id (skips routing; override via X-Maestro-Model header)
   --prefer-local           Prefer local tiers when possible
   --premium-only           Always use premium tier
   --dry-run-routing        Print routing only, no LLM call
@@ -602,6 +610,7 @@ Flags:
   --budget-usd <n>         Session budget cap (enforced)
   --max-tier <tier>        Never route above this tier
   --model-tier <tier>      Pin proxy requests to this tier (override via X-Maestro-Model-Tier header)
+  --model <id>             Pin proxy requests to this model (override via X-Maestro-Model header)
   --always-prefer-local    Session policy: prefer local tiers
   --last <n>               Limit telemetry records (stats/analyze)
   --min-samples <n>        Min samples per task/tier for analyze (default 5)

@@ -155,6 +155,8 @@ export interface RouterOverrides {
   /** Operator routing mode — constrains tier selection and escalation (v0.7+) */
   mode?: RoutingMode;
   modelTier?: ModelTier;
+  /** Skip tier routing; call this model id on the resolved gateway. */
+  modelOverride?: string;
   preferLocal?: boolean;
   premiumOnly?: boolean;
   debug?: boolean;

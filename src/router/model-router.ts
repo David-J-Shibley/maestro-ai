@@ -8,6 +8,7 @@ import type {
 } from "../types.js";
 import { capTier, isLocalTier, nextTier, TIER_ORDER } from "../types.js";
 import { resolveEndpointForTier } from "../config/tier-config.js";
+import { resolveModelOverride as lookupModelOverride } from "../config/model-override.js";
 import type { TierProbeStatus } from "../provider/probe.js";
 import {
   applyBudgetToTier,
@@ -77,6 +78,20 @@ export function routeTask(input: RouteInput): RoutingDecision {
       activeMode,
       modeConstraints
     );
+  }
+
+  if (overrides?.modelOverride?.trim()) {
+    return buildModelOverrideDecision({
+      modelId: overrides.modelOverride.trim(),
+      config,
+      analysis,
+      debug,
+      overrides,
+      tierStatuses,
+      activeMode,
+      modeConstraints,
+      userPrompt: input.userPrompt,
+    });
   }
 
   if (overrides?.modelTier) {
@@ -428,6 +443,113 @@ function resolveAvailableTier(
   }
 
   return { tier: requested };
+}
+
+function buildModelOverrideDecision(input: {
+  modelId: string;
+  config: RouterConfig;
+  analysis: TaskAnalysis;
+  debug: string[];
+  overrides?: RouterOverrides;
+  tierStatuses?: Map<ModelTier, TierProbeStatus>;
+  activeMode: import("../types.js").RoutingMode;
+  modeConstraints: ModeConstraints;
+  userPrompt?: string;
+}): RoutingDecision {
+  const {
+    modelId,
+    config,
+    analysis,
+    debug,
+    overrides,
+    tierStatuses,
+    activeMode,
+    modeConstraints,
+    userPrompt,
+  } = input;
+  const session = overrides?.session;
+  const preferTier = overrides?.modelTier ?? session?.stickyTier;
+
+  pushDebug(debug, `override: model=${modelId}`);
+
+  let resolved = lookupModelOverride(modelId, config, preferTier);
+  if (!resolved) {
+    resolved = lookupModelOverride(modelId, config, config.routing.defaultTier)!;
+  }
+
+  let tier = resolved.tier;
+  const reasons: string[] = [`model override: ${modelId}`];
+  if (resolved.source === "gateway_swap") {
+    reasons.push(`gateway swap on ${tier}`);
+    pushDebug(debug, `override: gateway swap via ${tier}`);
+  }
+
+  if (session?.maxTier) {
+    const capped = capTier(tier, session.maxTier);
+    if (capped !== tier) {
+      pushDebug(debug, `session max_tier=${session.maxTier} capped ${tier} → ${capped}`);
+      tier = capped;
+    }
+  }
+
+  const modeAdjusted = applyModeToTier(tier, analysis, modeConstraints);
+  tier = modeAdjusted.tier;
+  for (const note of modeAdjusted.notes) {
+    pushDebug(debug, `mode: ${note}`);
+  }
+
+  const budget = resolveBudgetStatus(session, config);
+  if (budget) {
+    tier = applyBudgetToTier(tier, budget, debug);
+  }
+
+  const guardrails = applyGuardrails({
+    tier,
+    analysis,
+    policy: config.policy,
+    budget,
+    tierStatuses,
+    userPrompt,
+  });
+  tier = guardrails.tier;
+  for (const g of guardrails.results) {
+    pushDebug(debug, `guardrail:${g.kind}:${g.action}: ${g.message}`);
+  }
+
+  const endpointLookup = lookupModelOverride(modelId, config, tier) ?? resolved;
+  const status = tierStatuses?.get(tier);
+  const tierResolved =
+    status?.effective ??
+    resolveEndpointForTier(
+      config,
+      tier,
+      true,
+      Boolean(config.models[tier].fallback)
+    );
+  const endpoint = tierResolved?.endpoint ?? endpointLookup.endpoint;
+
+  return {
+    tier,
+    requestedTier: resolved.tier,
+    model: modelId,
+    baseUrl: endpoint.baseUrl,
+    provider: endpoint.provider,
+    reason: reasons.join("; "),
+    fallbackTier: null,
+    endpointSource: tierResolved?.source,
+    debug,
+    mode: activeMode,
+    guardrails: guardrails.results.length ? guardrails.results : undefined,
+    budget: budget
+      ? {
+          session_id: budget.sessionId,
+          budget_usd: budget.budgetUsd,
+          spent_usd: budget.spentUsd,
+          remaining_usd: budget.remainingUsd,
+          cap_tier: budget.capTier,
+        }
+      : undefined,
+  };
 }
 
 function buildDecision(

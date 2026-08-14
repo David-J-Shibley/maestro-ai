@@ -727,4 +727,56 @@ describe("maestro proxy", () => {
       | undefined;
     expect(retryReq?.tools).toBeUndefined();
   });
+
+  it("pins model from server default and per-request header", async () => {
+    vi.mocked(dryRunRoute).mockClear();
+    const proxy = createProxyServer({
+      port: 0,
+      host: "127.0.0.1",
+      model: "qwen3-4b",
+    });
+    proxies.push(proxy);
+    const port = await listen(proxy);
+
+    await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "summarize this paragraph in two sentences" }],
+        stream: false,
+      }),
+    });
+
+    expect(dryRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: expect.objectContaining({ modelOverride: "qwen3-4b" }),
+      }),
+      expect.anything()
+    );
+
+    vi.mocked(dryRunRoute).mockClear();
+
+    await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Maestro-Model": "glm",
+      },
+      body: JSON.stringify({
+        model: "maestro",
+        max_tokens: 32,
+        messages: [{ role: "user", content: "refactor auth" }],
+        stream: false,
+      }),
+    });
+
+    expect(dryRunRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: expect.objectContaining({ modelOverride: "glm" }),
+      }),
+      expect.anything()
+    );
+  });
 });

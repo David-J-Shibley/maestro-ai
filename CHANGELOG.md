@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Proxy model pin** — `maestro proxy --model <id>` and per-request `X-Maestro-Model` header skip tier routing and call the specified model (still runs tool omission/sanitization). Also works on `maestro route --model`. Shown on `GET /status` as `model`.
+
 ## [1.9.4] - 2026-08-14
 
 ### Added
