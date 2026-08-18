@@ -53,7 +53,8 @@ import {
   type HarnessProfile,
   type HarnessProfileName,
 } from "./harness-profile.js";
-import { getRouteLog, recordProxyRoute } from "./route-log.js";
+import { buildProxyStatusPayload } from "./proxy-status.js";
+import { recordProxyRoute } from "./route-log.js";
 import { getStickyTier } from "./session-sticky.js";
 import {
   completeAnthropicPlainText,
@@ -841,6 +842,8 @@ async function streamRoutedAnthropic(opts: {
           : omitTools && tools?.length
             ? tools.length
             : undefined,
+      forceToolUse: forceToolUse || undefined,
+      truncated: streamResult.truncated || undefined,
       contextRetry: streamResult.contextRetry || undefined,
       outcome: streamResult.truncated ? "truncated" : "ok",
     });
@@ -916,6 +919,7 @@ async function streamRoutedAnthropic(opts: {
     model: routing.model,
     started,
     toolsOmitted: omitTools && tools?.length ? tools.length : undefined,
+    forceToolUse: forceToolUse || undefined,
   });
   if (verbose) {
     log(
@@ -1766,28 +1770,16 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
     }
 
     if (req.method === "GET" && (path === "/status" || path === "/v1/status")) {
-      const connectivity = await resolveConnectivity(config);
-      sendJson(res, 200, {
-        ok: true,
-        service: "maestro-proxy",
-        version: PACKAGE_VERSION,
+      const payload = await buildProxyStatusPayload({
+        config,
+        options,
         host,
         port,
-        profile: profile.name,
-        mode: options.mode ?? null,
-        maxTier: options.maxTier ?? null,
-        modelTier: options.modelTier ?? null,
-        model: options.model ?? null,
-        preferLocal: Boolean(options.alwaysPreferLocal || profile.stickyLocalBias),
-        sessionId: options.sessionId ?? ephemeralSessionId,
-        connectivity: {
-          online: connectivity.online,
-          reason: connectivity.reason,
-          source: connectivity.source,
-          localOnlyForced: connectivity.localOnlyForced,
-        },
-        recentRoutes: getRouteLog(),
+        profile,
+        ephemeralSessionId,
+        version: PACKAGE_VERSION,
       });
+      sendJson(res, 200, payload);
       return;
     }
 
@@ -2224,6 +2216,8 @@ export function createProxyServer(options: ProxyServerOptions = {}) {
             tier: routing.tier,
             model: routing.model,
             started,
+            toolsOmitted: omitTools && openAiTools?.length ? openAiTools.length : undefined,
+            forceToolUse: forceToolUse || undefined,
           });
 
           endJsonKeepalive(res, {

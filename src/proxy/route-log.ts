@@ -8,6 +8,8 @@ export interface RouteLogEntry {
   model?: string;
   plain?: boolean;
   toolsOmitted?: number;
+  forceToolUse?: boolean;
+  truncated?: boolean;
   latencyMs?: number;
   coerced?: boolean;
   plainRetry?: boolean;
@@ -32,6 +34,8 @@ export function recordProxyRoute(opts: {
   started: number;
   plain?: boolean;
   toolsOmitted?: number;
+  forceToolUse?: boolean;
+  truncated?: boolean;
   coerced?: boolean;
   plainRetry?: boolean;
   contextRetry?: boolean;
@@ -47,6 +51,8 @@ export function recordProxyRoute(opts: {
     model: opts.model,
     plain: opts.plain,
     toolsOmitted: opts.toolsOmitted,
+    forceToolUse: opts.forceToolUse,
+    truncated: opts.truncated,
     latencyMs: Date.now() - opts.started,
     coerced: opts.coerced,
     plainRetry: opts.plainRetry,

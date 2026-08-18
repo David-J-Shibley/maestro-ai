@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Richer proxy `/status`** — per-tier effective models (post-probe/fallback), LiteLLM process + config path hints, and enriched `recentRoutes` (`toolsOmitted`, `forceToolUse`, `truncated`, `contextRetry`).
+
 ## [1.9.5] - 2026-08-18
 
 ### Added

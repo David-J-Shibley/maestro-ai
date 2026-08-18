@@ -201,6 +201,11 @@ describe("maestro proxy", () => {
     expect(status.ok).toBe(true);
     expect(status.profile).toBe("claude-code");
     expect(Array.isArray(status.recentRoutes)).toBe(true);
+    expect(Array.isArray(status.tiers)).toBe(true);
+    expect(status.litellm).toMatchObject({
+      processRunning: expect.any(Boolean),
+      knownConfigPaths: expect.any(Array),
+    });
 
     const models = await fetch(`http://127.0.0.1:${port}/v1/models`).then((r) => r.json());
     const ids = (models.data as Array<{ id: string }>).map((m) => m.id);

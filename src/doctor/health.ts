@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
 import { loadConfig } from "../config/load-config.js";
+import { detectLitellmProcess } from "./litellm-process.js";
 import {
   formatValidationIssue,
   validateConfiguredModels,
@@ -112,16 +112,10 @@ function checkFeatherlessKey(): DoctorCheck {
 }
 
 function checkLitellmProcess(): DoctorCheck {
-  try {
-    const out = execSync("pgrep -fl litellm 2>/dev/null || true", { encoding: "utf8" }).trim();
-    const lines = out.split("\n").filter(Boolean);
-    const serverLine = lines.find((l) => /\blitellm\b/.test(l) && !/\bvi\s+/.test(l));
-    return {
-      name: "litellm_process",
-      pass: Boolean(serverLine),
-      detail: serverLine ?? (lines[0] ?? "no litellm server process found"),
-    };
-  } catch {
-    return { name: "litellm_process", pass: false, detail: "could not check process" };
-  }
+  const info = detectLitellmProcess();
+  return {
+    name: "litellm_process",
+    pass: info.running,
+    detail: info.detail,
+  };
 }
