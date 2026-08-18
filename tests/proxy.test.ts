@@ -203,6 +203,8 @@ describe("maestro proxy", () => {
     expect(Array.isArray(status.recentRoutes)).toBe(true);
     expect(Array.isArray(status.tiers)).toBe(true);
     expect(status.litellm).toMatchObject({
+      gatewayUp: expect.any(Boolean),
+      reachable: expect.any(Boolean),
       processRunning: expect.any(Boolean),
       knownConfigPaths: expect.any(Array),
     });

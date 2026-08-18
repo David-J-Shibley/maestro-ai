@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { loadConfigFromString } from "../src/config/load-config.js";
 import { buildProxyStatusPayload } from "../src/proxy/proxy-status.js";
 import { recordProxyRoute, clearRouteLog } from "../src/proxy/route-log.js";
 import { resolveHarnessProfile } from "../src/proxy/harness-profile.js";
+import { probeAllTiers } from "../src/provider/probe.js";
+
+vi.mock("../src/provider/probe.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/provider/probe.js")>();
+  return {
+    ...actual,
+    probeAllTiers: vi.fn(actual.probeAllTiers),
+  };
+});
 
 const BASE_CONFIG = `{
   "models": {
@@ -23,6 +32,10 @@ const BASE_CONFIG = `{
 }`;
 
 describe("buildProxyStatusPayload", () => {
+  beforeEach(() => {
+    vi.mocked(probeAllTiers).mockClear();
+  });
+
   it("includes tiers, litellm, and enriched recent routes", async () => {
     clearRouteLog();
     recordProxyRoute({
@@ -50,10 +63,16 @@ describe("buildProxyStatusPayload", () => {
     expect(Array.isArray(payload.tiers)).toBe(true);
     expect((payload.tiers as { tier: string }[]).length).toBe(4);
     expect(payload.litellm).toMatchObject({
+      gatewayUp: expect.any(Boolean),
+      reachable: expect.any(Boolean),
       processRunning: expect.any(Boolean),
       processDetail: expect.any(String),
       knownConfigPaths: expect.any(Array),
     });
+    expect(vi.mocked(probeAllTiers)).toHaveBeenCalledWith(
+      expect.anything(),
+      { force: true }
+    );
     const routes = payload.recentRoutes as Array<Record<string, unknown>>;
     expect(routes.at(-1)).toMatchObject({
       toolsOmitted: 42,

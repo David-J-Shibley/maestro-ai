@@ -1,6 +1,7 @@
 import type { ModelTier, RouterConfig, RoutingMode } from "../types.js";
 import { TIER_ORDER } from "../types.js";
 import { detectLitellmProcess, guessLitellmConfigPaths } from "../doctor/litellm-process.js";
+import { fetchModelCatalog } from "../provider/model-catalog.js";
 import { probeAllTiers } from "../provider/probe.js";
 import { resolveConnectivity } from "../provider/connectivity.js";
 import { getRouteLog } from "./route-log.js";
@@ -16,15 +17,22 @@ export interface ProxyStatusTier {
   endpointSource?: "primary" | "tier_fallback" | "premium_pool";
   fallbackReason?: string;
   latencyMs?: number;
+  primaryError?: string;
+  modelRegistered?: boolean;
 }
 
 export interface ProxyLitellmStatus {
+  /** GET /v1/models succeeded on the LiteLLM gateway (no model-id check). */
+  gatewayUp: boolean;
+  /** At least one litellm tier primary passed full probe (catalog + configured model id). */
   reachable: boolean;
   baseUrl: string | null;
   processRunning: boolean;
   processDetail: string;
   configPath: string | null;
   knownConfigPaths: string[];
+  catalogError?: string;
+  catalogSample?: string[];
 }
 
 export async function buildProxyStatusPayload(opts: {
@@ -44,7 +52,7 @@ export async function buildProxyStatusPayload(opts: {
   version: string;
 }): Promise<Record<string, unknown>> {
   const { config, options, host, port, profile, ephemeralSessionId, version } = opts;
-  const probe = await probeAllTiers(config);
+  const probe = await probeAllTiers(config, { force: true });
   const connectivity = await resolveConnectivity(config, probe);
 
   const litellmEndpoint =
@@ -56,10 +64,14 @@ export async function buildProxyStatusPayload(opts: {
 
   const process = detectLitellmProcess();
   const knownConfigPaths = guessLitellmConfigPaths();
-  const configPath =
-    process.configPath ?? knownConfigPaths[0] ?? null;
+  const configPath = process.configPath ?? knownConfigPaths[0] ?? null;
+
+  const catalog = litellmEndpoint
+    ? await fetchModelCatalog(litellmEndpoint, 5000, { force: true })
+    : null;
 
   const litellm: ProxyLitellmStatus = {
+    gatewayUp: catalog?.ok ?? false,
     reachable: probe.tiers.some(
       (t) => t.primary.provider === "litellm" && t.primary.available
     ),
@@ -68,6 +80,10 @@ export async function buildProxyStatusPayload(opts: {
     processDetail: process.detail,
     configPath,
     knownConfigPaths,
+    ...(catalog && !catalog.ok && catalog.error ? { catalogError: catalog.error } : {}),
+    ...(catalog?.ok && catalog.ids.length
+      ? { catalogSample: catalog.ids.slice(0, 8) }
+      : {}),
   };
 
   const tiers: ProxyStatusTier[] = TIER_ORDER.filter((tier) => config.models[tier]).map(
@@ -85,6 +101,8 @@ export async function buildProxyStatusPayload(opts: {
         endpointSource: status?.effective?.source,
         fallbackReason: status?.effective?.fallbackReason,
         latencyMs: status?.primary.latencyMs,
+        primaryError: status?.primary.error,
+        modelRegistered: status?.primary.modelRegistered,
       };
     }
   );

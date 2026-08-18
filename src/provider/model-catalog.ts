@@ -60,7 +60,19 @@ function catalogCacheKey(endpoint: ModelEndpointConfig): string {
   return `${endpoint.baseUrl}|${endpoint.apiKey ?? ""}`;
 }
 
-const catalogCache = new Map<string, ModelCatalogResult>();
+type CatalogCacheEntry = {
+  expiresAt: number;
+  value: ModelCatalogResult;
+};
+
+const catalogCache = new Map<string, CatalogCacheEntry>();
+const CATALOG_SUCCESS_TTL_MS = 30_000;
+/** Short TTL so a cold-start blip does not poison long-running proxy /status. */
+const CATALOG_FAILURE_TTL_MS = 5_000;
+
+function catalogCacheTtlMs(result: ModelCatalogResult): number {
+  return result.ok ? CATALOG_SUCCESS_TTL_MS : CATALOG_FAILURE_TTL_MS;
+}
 
 /** Clear catalog cache (tests). */
 export function clearModelCatalogCache(): void {
@@ -70,11 +82,14 @@ export function clearModelCatalogCache(): void {
 /** Fetch model ids from an OpenAI-compatible GET /v1/models (or /models). */
 export async function fetchModelCatalog(
   endpoint: ModelEndpointConfig,
-  timeoutMs = 5000
+  timeoutMs = 5000,
+  options?: { force?: boolean }
 ): Promise<ModelCatalogResult> {
   const key = catalogCacheKey(endpoint);
-  const hit = catalogCache.get(key);
-  if (hit) return hit;
+  if (!options?.force) {
+    const hit = catalogCache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -101,14 +116,20 @@ export async function fetchModelCatalog(
         latencyMs,
         error: `HTTP ${response.status}`,
       };
-      catalogCache.set(key, result);
+      catalogCache.set(key, {
+        expiresAt: Date.now() + catalogCacheTtlMs(result),
+        value: result,
+      });
       return result;
     }
 
     const json = (await response.json()) as unknown;
     const ids = parseModelIds(json);
     const result: ModelCatalogResult = { ok: true, ids, latencyMs };
-    catalogCache.set(key, result);
+    catalogCache.set(key, {
+      expiresAt: Date.now() + catalogCacheTtlMs(result),
+      value: result,
+    });
     return result;
   } catch (err) {
     const result: ModelCatalogResult = {
@@ -117,7 +138,10 @@ export async function fetchModelCatalog(
       latencyMs: Date.now() - started,
       error: err instanceof Error ? err.message : String(err),
     };
-    catalogCache.set(key, result);
+    catalogCache.set(key, {
+      expiresAt: Date.now() + catalogCacheTtlMs(result),
+      value: result,
+    });
     return result;
   } finally {
     clearTimeout(timer);

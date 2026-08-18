@@ -2,7 +2,7 @@
 
 Dynamic model delegation for agentic coding harnesses. Maestro routes LLM calls across local Ollama models and cloud-hosted models (via LiteLLM) based on task difficulty, risk, tools, and context size.
 
-**v1.9.5** adds proxy model pin (`--model`, `X-Maestro-Model`). **v1.9.4** retries proxy streams on context overflow (tools omitted once). **v1.9.3** adds proxy tier pinning (`--model-tier`, `X-Maestro-Model-Tier`). **v1.9.2** validates configured model ids against gateway `/v1/models` in probe, doctor, and proxy startup. **v1.9.1** hardens the Claude Code proxy (tool omission, chitchat bypass, agentic forwarding). **v1.9.0** adds workload/role hints and cache-aware session stickiness. **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
+**v1.9.6** fixes `/status` probe staleness and adds `litellm.gatewayUp` plus richer tier/route metadata. **v1.9.5** adds proxy model pin (`--model`, `X-Maestro-Model`). **v1.9.4** retries proxy streams on context overflow (tools omitted once). **v1.9.3** adds proxy tier pinning (`--model-tier`, `X-Maestro-Model-Tier`). **v1.9.2** validates configured model ids against gateway `/v1/models` in probe, doctor, and proxy startup. **v1.9.1** hardens the Claude Code proxy (tool omission, chitchat bypass, agentic forwarding). **v1.9.0** adds workload/role hints and cache-aware session stickiness. **v1.8** adds workflow progress. **v1.7** verification hooks + cost/feedback truth. **v1.6** optional `local_fast` classify. **v1.5** evidence-based routing, harness profiles, premium pool, sticky sessions.
 
 ## Quick start (new machine)
 
@@ -347,7 +347,7 @@ Tips:
 - Pin with `--model-tier local_strong` (or per-request header `X-Maestro-Model-Tier: hosted_oss`) to force a specific tier without changing the client model id.
 - On context overflow (`truncated=1`, zero streamed text), the proxy retries once with tools omitted before erroring — logged as `context_retry=1`.
 - Pin a specific model with `--model qwen3-4b` (or header `X-Maestro-Model: glm`) to skip routing while keeping proxy tool/sanitizer logic.
-- **`GET /status`** — connectivity, per-tier effective models (post-probe), LiteLLM process/config hints, and `recentRoutes` with `toolsOmitted`, `forceToolUse`, `truncated`, `contextRetry`.
+- **`GET /status`** — connectivity, per-tier effective models (post-probe), LiteLLM `gatewayUp` vs `reachable`, process/config hints, and `recentRoutes` with `toolsOmitted`, `forceToolUse`, `truncated`, `contextRetry`.
 - The proxy **echoes your requested model id** (clients won’t reject `glm` / `maestro`); real model is in `maestro.routed_model`.
 - **Tool passthrough:** For LiteLLM backends, Anthropic `/v1/messages` is forwarded natively (tools, tool_use, tool_result, betas) so Claude Code agent loops stay intact. OpenAI-compatible fallback still converts tools when needed.
 - Streaming is live token SSE (OpenAI or Anthropic event shapes). Request logs go to stderr as `[maestro-proxy] …`.

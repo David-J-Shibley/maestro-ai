@@ -97,4 +97,46 @@ describe("validateEndpointModel", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not cache catalog failures forever", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection refused"))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: "qwen3-4b" }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await fetchModelCatalog(LITELLM);
+    expect(first.ok).toBe(false);
+
+    const cached = await fetchModelCatalog(LITELLM);
+    expect(cached.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(5_001);
+
+    const retry = await fetchModelCatalog(LITELLM);
+    expect(retry.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it("force bypasses catalog cache", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: "qwen3-4b" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchModelCatalog(LITELLM);
+    await fetchModelCatalog(LITELLM, 5000, { force: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

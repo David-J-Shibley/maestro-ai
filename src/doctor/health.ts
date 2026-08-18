@@ -65,11 +65,14 @@ async function checkOllama(): Promise<DoctorCheck> {
 
 async function checkLitellmPort(): Promise<DoctorCheck> {
   try {
-    const res = await fetch("http://127.0.0.1:4000/health", { signal: AbortSignal.timeout(3000) });
+    const res = await fetch("http://127.0.0.1:4000/v1/models", {
+      headers: { Authorization: "Bearer sk-litellm-local" },
+      signal: AbortSignal.timeout(3000),
+    });
     return {
       name: "litellm_port",
       pass: res.ok,
-      detail: res.ok ? "Port 4000 accepting connections" : `HTTP ${res.status}`,
+      detail: res.ok ? "Port 4000 /v1/models OK" : `HTTP ${res.status}`,
     };
   } catch (err) {
     return {

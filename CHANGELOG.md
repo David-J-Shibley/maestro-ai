@@ -5,10 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.6] - 2026-08-18
 
 ### Added
-- **Richer proxy `/status`** — per-tier effective models (post-probe/fallback), LiteLLM process + config path hints, and enriched `recentRoutes` (`toolsOmitted`, `forceToolUse`, `truncated`, `contextRetry`).
+- **Richer proxy `/status`** — per-tier effective models (post-probe/fallback), LiteLLM process + config path hints, enriched `recentRoutes` (`toolsOmitted`, `forceToolUse`, `truncated`, `contextRetry`), and tier `primaryError` / `modelRegistered`.
+- **`litellm.gatewayUp`** on `/status` — `GET /v1/models` OK on the LiteLLM gateway, separate from `litellm.reachable` (full model probe).
+
+### Fixed
+- **`/status` stale probes** — always force-refreshes tier probes; catalog failures expire after 5s instead of poisoning the proxy forever.
+- **`maestro doctor` `litellm_port`** — checks `/v1/models` instead of `/health` (LiteLLM often has no health endpoint).
+
+[1.9.6]: https://github.com/David-J-Shibley/maestro-ai/releases/tag/v1.9.6
 
 ## [1.9.5] - 2026-08-18
 
